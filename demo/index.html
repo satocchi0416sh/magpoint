@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MagPoint — demo stage</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --line: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #2f6bff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 15px/1.5 system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 40px;
+      }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      p.lead { color: var(--muted); margin: 0 0 28px; }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; }
+
+      /* dense button grid — distractor stress test */
+      .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; }
+      .grid button {
+        padding: 8px 0; font-size: 13px; border-radius: 6px;
+        border: 1px solid var(--line); background: #21262d; color: var(--text); cursor: pointer;
+      }
+      .grid button:hover { border-color: var(--accent); }
+
+      /* tiny targets — the "you can't miss" money shot */
+      .tiny { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+      .tiny label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+
+      /* fiddly icon toolbar */
+      .toolbar { display: inline-flex; gap: 2px; background: #21262d; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+      .toolbar button {
+        width: 28px; height: 28px; display: grid; place-items: center;
+        border: none; background: transparent; color: var(--muted); border-radius: 5px; cursor: pointer; font-size: 14px;
+      }
+      .toolbar button:hover { background: #30363d; color: var(--text); }
+
+      /* form with small controls */
+      form { display: grid; gap: 12px; max-width: 420px; }
+      input[type="text"], input[type="email"], select {
+        padding: 9px 11px; border-radius: 7px; border: 1px solid var(--line);
+        background: #0d1117; color: var(--text); font-size: 14px;
+      }
+      .row { display: flex; gap: 10px; }
+      .submit { padding: 9px 16px; border-radius: 7px; border: none; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+
+      .links a { color: #58a6ff; margin-right: 14px; font-size: 13px; }
+      .hint { position: fixed; top: 16px; right: 16px; background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div class="hint">Alt+M to toggle MagPoint</div>
+    <h1>MagPoint — demo stage</h1>
+    <p class="lead">Targets get progressively nastier. Try clicking the small ones with the magnet off, then on.</p>
+
+    <section>
+      <h2>1 · Dense button grid (distractors everywhere)</h2>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <section>
+      <h2>2 · Tiny checkboxes &amp; radios</h2>
+      <div class="tiny">
+        <label><input type="checkbox" /> alpha</label>
+        <label><input type="checkbox" /> beta</label>
+        <label><input type="checkbox" /> gamma</label>
+        <label><input type="checkbox" /> delta</label>
+        <label><input type="radio" name="r" /> one</label>
+        <label><input type="radio" name="r" /> two</label>
+        <label><input type="radio" name="r" /> three</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>3 · Fiddly icon toolbar</h2>
+      <div class="toolbar">
+        <button title="bold">B</button>
+        <button title="italic">I</button>
+        <button title="underline">U</button>
+        <button title="link">🔗</button>
+        <button title="image">🖼</button>
+        <button title="list">≡</button>
+        <button title="code">&lt;/&gt;</button>
+        <button title="quote">❝</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>4 · Form (magnet stands down inside text fields)</h2>
+      <form onsubmit="return false">
+        <input type="text" placeholder="Name" />
+        <input type="email" placeholder="Email" />
+        <div class="row">
+          <select><option>Plan A</option><option>Plan B</option></select>
+          <label style="color:var(--muted);font-size:13px"><input type="checkbox" /> subscribe</label>
+        </div>
+        <button class="submit" type="submit">Submit</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>5 · Inline links</h2>
+      <p class="links">
+        <a href="#a">Home</a><a href="#b">Docs</a><a href="#c">Pricing</a><a href="#d">Blog</a><a href="#e">About</a><a href="#f">Contact</a>
+      </p>
+    </section>
+
+    <script>
+      const grid = document.getElementById('grid');
+      for (let i = 1; i <= 48; i++) {
+        const b = document.createElement('button');
+        b.textContent = i;
+        b.onclick = () => { b.style.background = '#2f6bff'; b.style.color = '#fff'; };
+        grid.appendChild(b);
+      }
+    </script>
+  </body>
+</html>

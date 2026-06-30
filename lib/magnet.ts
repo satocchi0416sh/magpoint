@@ -1,17 +1,18 @@
 /**
- * MagPoint — magnetic cursor engine (Phase 0.1, liquid).
+ * MagPoint — magnetic cursor engine.
  *
- * Selection (the part that decides what gets clicked) is the bubble cursor
- * (Grossman & Balakrishnan, CHI 2005): each frame capture the clickable element
- * with the smallest point-to-rectangle distance, within `maxRadius`. Provably
+ * Selection (what actually gets clicked) is the bubble cursor (Grossman &
+ * Balakrishnan, CHI 2005): each frame capture the clickable element with the
+ * smallest point-to-rectangle distance, within `maxRadius`. Provably
  * distractor-robust — never grabs two targets at once.
  *
- * Presentation is decoupled and purely cosmetic: a liquid "mercury" cursor that
- * springs onto the captured target (with overshoot + squash/stretch) and stays
- * tethered to the physical pointer by a metaball bridge that thins as it
- * stretches. Hit-test never depends on the animation, so the goo can't mis-click.
+ * Presentation is decoupled and purely cosmetic. There is no drawn pointer and
+ * no tether line: the captured element wears a liquid-metal frame, and on the
+ * side facing the pointer the frame bleeds a mercury droplet that necks out
+ * toward the cursor (surface tension being pulled). Hit-test never depends on
+ * the animation, so the goo can't mis-click.
  *
- * Metaball connector: Hiroyuki Sato's algorithm, params per https://varun.ca/metaballs/
+ * Metaball neck: Hiroyuki Sato's algorithm, params per https://varun.ca/metaballs/
  */
 
 const CLICKABLE = [
@@ -40,22 +41,22 @@ interface Candidate {
 
 type Pt = [number, number];
 
-const ACCENT = '40, 110, 255';
-
 const opts = {
   maxRadius: 120, // R_max: don't snap to far targets; preserves empty-space clicks
-  // liquid cursor
-  ghostR: 5, // radius at the physical-pointer end of the bridge
-  headR: 9, // radius of the magnet head that sits on the target
-  spring: { k: 0.14, zeta: 0.72 }, // zeta < 1 => overshoot ("プニッ")
-  squash: { gain: 0.045, max: 0.6 }, // velocity-driven stretch along motion
+  framePad: 4, // gap between element and the liquid frame
+  frameWidth: 3.5, // frame thickness
+  frameRadius: 9, // frame corner radius
+  extrudeR: 10, // radius of the bulge where the droplet leaves the frame
+  tipR: 6, // droplet radius near the pointer
+  spring: { k: 0.2, zeta: 0.7 }, // droplet trails the pointer with a little overshoot
+  squash: { gain: 0.04, max: 0.5 }, // velocity-driven stretch of the droplet
   handleLenRate: 2.4, // metaball curviness
   v: 0.5, // metaball tangent spread
 };
 
 let candidates: Candidate[] = [];
-let raw: Pt = [-1, -1]; // physical pointer
-const head = { x: -1, y: -1, vx: 0, vy: 0 }; // eased magnet head
+let raw: Pt = [-1, -1]; // physical pointer (drives selection)
+const tip = { x: -1, y: -1, vx: 0, vy: 0 }; // droplet, trails the pointer
 let captured: Candidate | null = null;
 let wasCaptured = false;
 let enabled = true;
@@ -86,6 +87,8 @@ function nearest(x: number, y: number): Candidate | null {
   }
   return best && bestD <= opts.maxRadius ? best : null;
 }
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // ---- candidate collection -------------------------------------------------
 
@@ -131,11 +134,7 @@ function suppressed(): boolean {
 
 // ---- liquid rendering -----------------------------------------------------
 
-/**
- * Metaball bridge between circle A (a, r1) and circle B (b, r2).
- * Returns false (draw nothing) when one circle contains the other.
- * Hiroyuki Sato's construction; tangent points + perpendicular handles.
- */
+/** Metaball bridge between circle A (a, r1) and circle B (b, r2) — adds a path, no fill. */
 function metaball(a: Pt, r1: number, b: Pt, r2: number): void {
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
@@ -185,77 +184,94 @@ function metaball(a: Pt, r1: number, b: Pt, r2: number): void {
   ctx.closePath();
 }
 
+function roundRectPath(x: number, y: number, w: number, h: number, r: number): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+/** Vertical liquid-metal gradient spanning [yTop, yBot]. */
+function metal(yTop: number, yBot: number): CanvasGradient {
+  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+  g.addColorStop(0, 'rgba(214, 228, 255, 1)');
+  g.addColorStop(0.4, 'rgba(78, 138, 255, 1)');
+  g.addColorStop(0.6, 'rgba(44, 104, 236, 1)');
+  g.addColorStop(1, 'rgba(20, 60, 176, 1)');
+  return g;
+}
+
 function render(): void {
   ctx.clearRect(0, 0, innerWidth, innerHeight);
   if (!captured) return;
   const r = captured.rect;
 
-  // highlight the captured element
+  // the liquid frame, padded out from the element
+  const fx = r.left - opts.framePad;
+  const fy = r.top - opts.framePad;
+  const fw = r.width + opts.framePad * 2;
+  const fh = r.height + opts.framePad * 2;
+  const fr = fx + fw;
+  const fb = fy + fh;
+
+  // closest point on the frame to the droplet, and whether the droplet is outside
+  const ex = clamp(tip.x, fx, fr);
+  const ey = clamp(tip.y, fy, fb);
+  const dEdge = Math.hypot(tip.x - ex, tip.y - ey);
+  const outside = tip.x < fx || tip.x > fr || tip.y < fy || tip.y > fb;
+
+  const gTop = Math.min(fy, tip.y - opts.tipR);
+  const gBot = Math.max(fb, tip.y + opts.tipR);
+  const grad = metal(gTop, gBot);
+
   ctx.save();
-  ctx.strokeStyle = `rgba(${ACCENT}, 0.9)`;
-  ctx.lineWidth = 2;
-  const x = r.left - 4;
-  const y = r.top - 4;
-  const w = r.width + 8;
-  const h = r.height + 8;
-  const rad = 8;
-  ctx.beginPath();
-  ctx.moveTo(x + rad, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rad);
-  ctx.arcTo(x + w, y + h, x, y + h, rad);
-  ctx.arcTo(x, y + h, x, y, rad);
-  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.shadowColor = 'rgba(40, 110, 255, 0.4)';
+  ctx.shadowBlur = 12;
+
+  // droplet necking out from the frame toward the pointer
+  if (outside && dEdge > 1) {
+    const speed = Math.hypot(tip.vx, tip.vy);
+    const stretch = 1 + Math.min(opts.squash.max, speed * opts.squash.gain);
+    const squash = 1 / stretch;
+    const vAng = Math.atan2(tip.vy, tip.vx);
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    metaball([ex, ey], opts.extrudeR, [tip.x, tip.y], opts.tipR);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.ellipse(tip.x, tip.y, opts.tipR * stretch, opts.tipR * squash, vAng, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // the metallic frame itself
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = opts.frameWidth;
+  roundRectPath(fx, fy, fw, fh, opts.frameRadius);
   ctx.stroke();
   ctx.restore();
 
-  // distance pointer -> head, used to taper the tail so it thins as it stretches
-  const dx = head.x - raw[0];
-  const dy = head.y - raw[1];
-  const dHead = Math.hypot(dx, dy);
-  const t = Math.min(1, dHead / opts.maxRadius);
-  const ghostR = opts.ghostR * (1 - 0.85 * t); // tail wisp shrinks with stretch
-
-  // squash & stretch the head along its velocity
-  const speed = Math.hypot(head.vx, head.vy);
-  const stretch = 1 + Math.min(opts.squash.max, speed * opts.squash.gain);
-  const squash = 1 / stretch;
-  const vAng = Math.atan2(head.vy, head.vx);
-
-  // one liquid mass: bridge + ghost + head, filled together so they merge
-  ctx.save();
-  ctx.fillStyle = `rgba(${ACCENT}, 1)`;
-  ctx.shadowColor = `rgba(${ACCENT}, 0.45)`;
-  ctx.shadowBlur = 10;
-
-  ctx.beginPath();
-  metaball([raw[0], raw[1]], ghostR, [head.x, head.y], opts.headR);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.arc(raw[0], raw[1], ghostR, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.ellipse(head.x, head.y, opts.headR * stretch, opts.headR * squash, vAng, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // white core so the head reads as a cursor
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-  ctx.beginPath();
-  ctx.arc(head.x, head.y, 2.5, 0, Math.PI * 2);
-  ctx.fill();
+  // specular top highlight for the metal sheen
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+  ctx.lineWidth = 1;
+  roundRectPath(fx + 1, fy + 1, fw - 2, fh - 2, opts.frameRadius - 1);
+  ctx.stroke();
 }
 
 // ---- main loop ------------------------------------------------------------
 
-function springTo(tx: number, ty: number): void {
+function springTo(target: Pt): void {
   const { k, zeta } = opts.spring;
   const c = 2 * Math.sqrt(k) * zeta;
-  head.vx += k * (tx - head.x) - c * head.vx;
-  head.vy += k * (ty - head.y) - c * head.vy;
-  head.x += head.vx;
-  head.y += head.vy;
+  tip.vx += k * (target[0] - tip.x) - c * tip.vx;
+  tip.vy += k * (target[1] - tip.y) - c * tip.vy;
+  tip.x += tip.vx;
+  tip.y += tip.vy;
 }
 
 function frame(): void {
@@ -266,18 +282,16 @@ function frame(): void {
     }
     captured = suppressed() ? null : nearest(raw[0], raw[1]);
 
-    // on a fresh capture, seed the head at the pointer so it leaps onto the target
+    // seed the droplet at the pointer on a fresh capture
     if (captured && !wasCaptured) {
-      head.x = raw[0];
-      head.y = raw[1];
-      head.vx = 0;
-      head.vy = 0;
+      tip.x = raw[0];
+      tip.y = raw[1];
+      tip.vx = 0;
+      tip.vy = 0;
     }
     wasCaptured = !!captured;
 
-    if (captured) {
-      springTo(captured.rect.left + captured.rect.width / 2, captured.rect.top + captured.rect.height / 2);
-    }
+    if (captured) springTo(raw);
 
     document.documentElement.classList.toggle('magpoint-snapping', !!captured);
     render();
@@ -316,7 +330,7 @@ function showBadge(text: string): void {
     badge.style.cssText =
       'position:fixed;bottom:16px;right:16px;z-index:2147483647;padding:6px 12px;' +
       'border-radius:999px;font:600 12px/1 system-ui,sans-serif;color:#fff;' +
-      `background:rgba(${ACCENT},.95);pointer-events:none;transition:opacity .3s;box-shadow:0 2px 8px rgba(0,0,0,.2)`;
+      'background:rgba(40,110,255,.95);pointer-events:none;transition:opacity .3s;box-shadow:0 2px 8px rgba(0,0,0,.2)';
     document.documentElement.appendChild(badge);
   }
   badge.textContent = text;

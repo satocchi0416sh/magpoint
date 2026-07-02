@@ -117,9 +117,17 @@ const linkCount = await page.evaluate(async () => {
   mv(...pos);
   await new Promise((r) => setTimeout(r, 600));
   for (const p of pts) {
-    await animate(pos, p, 260 + Math.hypot(p[0] - pos[0], p[1] - pos[1]) * 1.6);
+    // pause just short of the target first — the frame stretches out to meet
+    // the cursor, which is the whole "magnet" money shot
+    const dx = p[0] - pos[0];
+    const dy = p[1] - pos[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const near = [p[0] - (dx / len) * 42, p[1] - (dy / len) * 42];
+    await animate(pos, near, 220 + len * 1.4);
+    await new Promise((r) => setTimeout(r, 550)); // hover off-target: stretched reach
+    await animate(near, p, 240);
     pos = p;
-    await new Promise((r) => setTimeout(r, 700)); // dwell: let the glass settle
+    await new Promise((r) => setTimeout(r, 600)); // settle on the target
   }
   await new Promise((r) => setTimeout(r, 500));
   return pts.length;

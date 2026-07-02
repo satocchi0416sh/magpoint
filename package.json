@@ -17,6 +17,8 @@
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
+    "playwright": "^1.61.1",
+    "playwright-core": "^1.61.1",
     "typescript": "^5.9.3",
     "wxt": "^0.20.27"
   }

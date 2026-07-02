@@ -5,8 +5,9 @@
 // the OS cursor doesn't move under CDP, hence the overlay), captures the tab via
 // CDP screencast, and assembles an .mp4 with ffmpeg.
 //
-// Usage: npm run build && node demo-studio/spike.mjs
-// Output: demo-studio/out/spike.mp4
+// Usage: npm run build && node demo-studio/spike.mjs [url] [targetSelector] [outName]
+//   e.g. node demo-studio/spike.mjs https://news.ycombinator.com .votearrow hn
+// Output: demo-studio/out/<outName>.mp4 (default: spike)
 
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -19,7 +20,13 @@ const EXT = join(ROOT, '.output/chrome-mv3');
 const OUT = join(ROOT, 'demo-studio/out');
 const FRAMES = join(OUT, 'frames');
 // NOTE: use Playwright's Chromium — branded Google Chrome (137+) ignores --load-extension.
-const PAGE = 'https://en.wikipedia.org/wiki/Fitts%27s_law';
+const PAGE = process.argv[2] ?? 'https://en.wikipedia.org/wiki/Fitts%27s_law';
+const SELECTOR = process.argv[3] ?? 'a[href]';
+const OUTNAME = process.argv[4] ?? 'spike';
+// approach direction for the off-target dwell: 'path' = 42px short along the travel
+// direction; 'left' = from the left margin (for leftmost targets like HN vote arrows,
+// where a path-side dwell would legitimately capture the adjacent title link instead)
+const APPROACH = process.argv[5] ?? 'path';
 const W = 1280;
 const H = 800;
 
@@ -68,7 +75,7 @@ await cdp.send('Page.startScreencast', {
 await page.waitForTimeout(400);
 
 // ---- fake cursor + humanized tour, all in-page for frame-exact timing ----
-const linkCount = await page.evaluate(async () => {
+const linkCount = await page.evaluate(async ({ SEL, MODE }) => {
   const cur = document.createElement('div');
   cur.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:26px;height:38px';
   cur.innerHTML =
@@ -81,10 +88,10 @@ const linkCount = await page.evaluate(async () => {
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: x, clientY: y, bubbles: true }));
   };
 
-  // waypoints: visible links spread across the upper viewport
-  const links = [...document.querySelectorAll('a[href]')].filter((a) => {
+  // waypoints: visible targets spread across the upper viewport
+  const links = [...document.querySelectorAll(SEL)].filter((a) => {
     const r = a.getBoundingClientRect();
-    return r.width > 8 && r.height > 8 && r.top > 90 && r.bottom < 640 && r.left > 10 && r.right < 1250;
+    return r.width > 7 && r.height > 7 && r.top > 60 && r.bottom < 640 && r.left > 10 && r.right < 1250;
   });
   const pick = [0.12, 0.3, 0.5, 0.68, 0.85].map((f) => links[Math.floor(f * links.length)]).filter(Boolean);
   const pts = pick.map((a) => {
@@ -122,7 +129,7 @@ const linkCount = await page.evaluate(async () => {
     const dx = p[0] - pos[0];
     const dy = p[1] - pos[1];
     const len = Math.hypot(dx, dy) || 1;
-    const near = [p[0] - (dx / len) * 42, p[1] - (dy / len) * 42];
+    const near = MODE === 'left' ? [p[0] - 46, p[1] + 14] : [p[0] - (dx / len) * 42, p[1] - (dy / len) * 42];
     await animate(pos, near, 220 + len * 1.4);
     await new Promise((r) => setTimeout(r, 550)); // hover off-target: stretched reach
     await animate(near, p, 240);
@@ -131,7 +138,7 @@ const linkCount = await page.evaluate(async () => {
   }
   await new Promise((r) => setTimeout(r, 500));
   return pts.length;
-});
+}, { SEL: SELECTOR, MODE: APPROACH });
 
 await page.waitForTimeout(400);
 await cdp.send('Page.stopScreencast');
@@ -148,8 +155,8 @@ execFileSync('ffmpeg', [
   '-y', '-f', 'concat', '-safe', '0', '-i', join(OUT, 'concat.txt'),
   '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=60',
   '-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p',
-  join(OUT, 'spike.mp4'),
+  join(OUT, `${OUTNAME}.mp4`),
 ], { stdio: 'ignore' });
 
 const fps = frames.length / (frames[frames.length - 1].ts - frames[0].ts);
-console.log(JSON.stringify({ frames: frames.length, effectiveFps: Math.round(fps), waypoints: linkCount, out: 'demo-studio/out/spike.mp4' }));
+console.log(JSON.stringify({ frames: frames.length, effectiveFps: Math.round(fps), waypoints: linkCount, out: `demo-studio/out/${OUTNAME}.mp4` }));

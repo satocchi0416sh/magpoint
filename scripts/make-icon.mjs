@@ -3,10 +3,10 @@
 // Render to PNG with: node scripts/make-icon.mjs > /tmp/icon.svg (then rasterize).
 
 const S = 512; // canvas
-const FRAME = { x: 96, y: 96, w: 320, h: 320, r: 88 };
-const CURSOR = [432, 432]; // bulge target, bottom-right
-const BULGE = { A: 34, sigma: 110, R: 260 };
-const STROKE = 52;
+const FRAME = { x: 140, y: 140, w: 232, h: 232, r: 64 };
+const CURSOR = [392, 392]; // bulge target, bottom-right
+const BULGE = { A: 30, sigma: 95, R: 260 };
+const STROKE = 30;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -64,24 +64,32 @@ function catmullRomClosed(pts) {
 const perim = roundRectPerimeter(FRAME.x, FRAME.y, FRAME.w, FRAME.h, FRAME.r, 200);
 const ring = catmullRomClosed(deform(perim, CURSOR, BULGE));
 
-// macOS-style arrow, tip at the bulge target
-const arrow = `M 0 0 L 0 30.2 L 7.2 23.5 L 12.1 34.4 L 17.5 32 L 12.6 21.2 L 22.4 20.2 Z`;
+// sleek flat arrow (no outline), tip at the bulge target
+const arrow = `M 0 0 L 0 26.4 L 6.1 20.6 L 10.3 30 L 14.9 27.9 L 10.7 18.7 L 19.3 17.9 Z`;
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">
   <defs>
-    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#d6e4ff"/>
-      <stop offset="0.4" stop-color="#4e8aff"/>
-      <stop offset="0.6" stop-color="#2c68ec"/>
-      <stop offset="1" stop-color="#143cb0"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111a33"/>
+      <stop offset="1" stop-color="#0a0f1f"/>
     </linearGradient>
+    <linearGradient id="liquid" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9db9ff"/>
+      <stop offset="0.55" stop-color="#3f7bff"/>
+      <stop offset="1" stop-color="#2553e8"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
   </defs>
-  <path d="${ring}" fill="none" stroke="#0b1c4a" stroke-width="${STROKE + 14}" opacity="0.9"/>
-  <path d="${ring}" fill="none" stroke="url(#metal)" stroke-width="${STROKE}"/>
-  <path d="${ring}" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="6"
-        transform="translate(0,-${STROKE / 2 - 5})" opacity="0.8"/>
-  <g transform="translate(${CURSOR[0] - 11},${CURSOR[1] - 17}) scale(2.6)">
-    <path d="${arrow}" fill="#ffffff" stroke="#0b1c4a" stroke-width="2.6" stroke-linejoin="round"/>
+  <rect x="16" y="16" width="480" height="480" rx="118" fill="url(#tile)"/>
+  <path d="${ring}" fill="none" stroke="#3f7bff" stroke-width="${STROKE + 10}" opacity="0.55" filter="url(#glow)"/>
+  <path d="${ring}" fill="none" stroke="url(#liquid)" stroke-width="${STROKE}" stroke-linecap="round"/>
+  <g transform="translate(${CURSOR[0] - 8},${CURSOR[1] - 12}) scale(2.4)" filter="url(#soft)">
+    <path d="${arrow}" fill="#ffffff" stroke-linejoin="round"/>
   </g>
 </svg>`;
 

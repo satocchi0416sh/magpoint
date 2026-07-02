@@ -4,7 +4,28 @@
 clickable element — links, buttons, inputs — on *any* page, so small targets become
 effortless to hit. A pointing-assist & accessibility tool, not a cosmetic cursor skin.
 
-> Status: early work in progress (Phase 0 — proving the feel). Not yet on the Chrome Web Store.
+<!-- hero demo video goes here (GitHub user-attachments mp4) -->
+
+The captured element wears a **liquid-glass highlight** — a single deformable outline
+that bulges toward your pointer, refracting the page behind it. Purely cosmetic:
+selection never depends on the animation, so it can't mis-click.
+
+> Status: working and fun. Chrome Web Store release in progress.
+
+## Install
+
+- **Chrome Web Store**: coming soon.
+- **From source** (Chrome / Chromium):
+
+  ```sh
+  npm install && npm run build
+  ```
+
+  Then open `chrome://extensions`, enable *Developer mode*, click *Load unpacked*,
+  and pick `.output/chrome-mv3`. Press **Alt+M** on any page to toggle MagPoint.
+
+The liquid-glass lens uses `backdrop-filter: url(#…)`, which currently renders in
+Chromium only. Selection works everywhere; Firefox gets a simplified highlight (planned).
 
 ## Why
 

@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MagPoint — liquid-glass playground</title>
+    <!--
+      Phase 1 "build before judging" harness (see docs/liquid-glass-notes.md → Visual loop).
+      Purpose: judge the SVG-displacement liquid-glass material in FROZEN states before touching
+      product code. The `drawHighlight()` block below is written to be lifted into lib/magnet.ts.
+
+      Chromium-only: backdrop-filter: url(#..displacement..) does not work in Safari/Firefox.
+      Open this file directly in Chrome.
+    -->
+    <style>
+      :root {
+        --panel: #12151c;
+        --line: #2a2f3a;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #2f6bff;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, sans-serif;
+        color: var(--text);
+        background: #0d1117;
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* ---- Stage (left): busy photo bg is essential — glass is invisible over flat color ---- */
+      #stage {
+        position: relative;
+        overflow: hidden;
+        /* Deterministic busy photo (seeded). Swap with the "背景画像" picker to test other scenes. */
+        background: #222 center/cover no-repeat url("https://picsum.photos/seed/magpoint-glass/1600/1000");
+      }
+      #stage .caption {
+        position: absolute; top: 14px; left: 16px; z-index: 5;
+        background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 8px;
+        font-size: 12px; color: #fff; backdrop-filter: blur(4px);
+      }
+      /* Mock target rows — the "clickables" the real extension would capture. */
+      #targets {
+        position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+        display: flex; flex-wrap: wrap; gap: 12px; padding: 28px;
+        justify-content: center; align-items: flex-end;
+      }
+      .target {
+        background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.35);
+        padding: 10px 16px; border-radius: 8px; font-size: 13px; white-space: nowrap;
+        backdrop-filter: blur(2px);
+      }
+      #hero.target { padding: 16px 28px; font-size: 15px; font-weight: 600; }
+
+      /* The captured cursor marker (hardcoded per frozen state). */
+      #cursor {
+        position: absolute; z-index: 20; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+        border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.5), 0 0 10px rgba(255,255,255,.8);
+        pointer-events: none;
+      }
+
+      /* ---- Glass highlight layers ---- */
+      /* Refraction/frost layer: an element clipped to the deformable path, sampling the backdrop. */
+      #glass {
+        position: absolute; z-index: 10; pointer-events: none; left: 0; top: 0;
+        /* backdrop-filter set live from JS: blur() saturate() url(#lens) */
+      }
+      /* Crisp specular rim + depth: SVG path drawn on top, always follows the exact deformed outline. */
+      #rimSvg { position: absolute; z-index: 11; left: 0; top: 0; pointer-events: none; overflow: visible; }
+      #filters { position: absolute; width: 0; height: 0; }
+
+      /* ---- Controls (right) ---- */
+      #panel {
+        background: var(--panel); border-left: 1px solid var(--line);
+        padding: 16px; overflow-y: auto;
+      }
+      #panel h1 { font-size: 15px; margin: 0 0 2px; }
+      #panel .sub { color: var(--muted); font-size: 12px; margin: 0 0 16px; }
+      fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 10px 12px; }
+      legend { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 0 4px; }
+      .state-row { display: flex; flex-wrap: wrap; gap: 6px; }
+      .state-row label {
+        flex: 1 1 45%; display: flex; align-items: center; gap: 6px;
+        border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 12px;
+      }
+      .state-row label:has(input:checked) { border-color: var(--accent); background: rgba(47,107,255,.12); }
+      .slider { margin: 10px 0; }
+      .slider .lbl { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 2px; }
+      .slider .lbl b { color: var(--muted); font-weight: 500; }
+      .slider .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+      input[type="range"] { width: 100%; }
+      .field { font-size: 12px; margin: 8px 0; }
+      .field input[type="file"] { width: 100%; font-size: 11px; color: var(--muted); }
+      .note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+      button.reset { width: 100%; padding: 8px; margin-top: 6px; background: #1b2130; color: var(--text);
+        border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+
+      /* ---- Apple diff drawer ---- */
+      #diff { position: absolute; z-index: 30; right: 12px; bottom: 12px; width: 260px;
+        background: rgba(0,0,0,.6); border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+      #diff .hd { font-size: 11px; color: var(--muted); margin-bottom: 6px; display: flex; justify-content: space-between; }
+      #diff img { width: 100%; border-radius: 6px; display: block; }
+      #diff.empty img { display: none; }
+      #diff .ph { font-size: 11px; color: var(--muted); text-align: center; padding: 20px 8px;
+        border: 1px dashed var(--line); border-radius: 6px; }
+      #diff.empty .ph { display: block; } #diff:not(.empty) .ph { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div class="caption">MagPoint · liquid-glass playground — frozen states over a busy photo</div>
+
+      <svg id="filters" aria-hidden="true">
+        <defs>
+          <!-- Lens: displace the backdrop through a generated rounded-rect refraction map. -->
+          <filter id="lens" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">
+            <feImage id="lensMap" result="map" preserveAspectRatio="none" />
+            <feDisplacementMap id="lensDisp" in="SourceGraphic" in2="map"
+              xChannelSelector="R" yChannelSelector="G" scale="55" />
+          </filter>
+        </defs>
+      </svg>
+
+      <div id="glass"></div>
+      <svg id="rimSvg"><path id="rimPath" fill="none" /></svg>
+      <div id="cursor"></div>
+
+      <div id="targets">
+        <a class="target" href="#">Home</a>
+        <a class="target" href="#">Docs</a>
+        <button class="target">Settings</button>
+        <button id="hero" class="target">Get started</button>
+        <a class="target" href="#">Pricing</a>
+        <button class="target">Sign in</button>
+        <a class="target" href="#">Blog</a>
+      </div>
+
+      <div id="diff" class="empty">
+        <div class="hd"><span>Apple “Meet Liquid Glass” still</span></div>
+        <div class="ph">Load a reference still (右パネル) to diff side-by-side.</div>
+        <img id="diffImg" alt="reference still" />
+      </div>
+    </div>
+
+    <div id="panel">
+      <h1>Liquid-glass playground</h1>
+      <p class="sub">Phase 1 · judge the material before touching product code</p>
+
+      <fieldset>
+        <legend>Frozen state (cursor)</legend>
+        <div class="state-row" id="states">
+          <label><input type="radio" name="state" value="idle" checked /> idle</label>
+          <label><input type="radio" name="state" value="edge" /> 辺の近く</label>
+          <label><input type="radio" name="state" value="corner" /> 角</label>
+          <label><input type="radio" name="state" value="far" /> 遠い</label>
+        </div>
+        <div class="note">bulge points toward the cursor; “遠い” is within R so it barely reacts.</div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Deformable frame (B1)</legend>
+        <div class="slider" data-k="A"><div class="lbl"><b>A · max bulge</b><span class="val"></span></div>
+          <input type="range" min="0" max="28" step="1" value="12" /></div>
+        <div class="slider" data-k="sigma"><div class="lbl"><b>σ · bulge spread (arc px)</b><span class="val"></span></div>
+          <input type="range" min="10" max="120" step="1" value="45" /></div>
+        <div class="slider" data-k="R"><div class="lbl"><b>R · reaction radius</b><span class="val"></span></div>
+          <input type="range" min="40" max="220" step="2" value="110" /></div>
+        <div class="slider" data-k="radius"><div class="lbl"><b>corner radius</b><span class="val"></span></div>
+          <input type="range" min="0" max="40" step="1" value="14" /></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Material</legend>
+        <div class="slider" data-k="scale"><div class="lbl"><b>displacement scale</b><span class="val"></span></div>
+          <input type="range" min="0" max="160" step="1" value="55" /></div>
+        <div class="slider" data-k="blur"><div class="lbl"><b>backdrop blur (px)</b><span class="val"></span></div>
+          <input type="range" min="0" max="16" step="0.5" value="0.5" /></div>
+        <div class="slider" data-k="saturate"><div class="lbl"><b>saturate (%)</b><span class="val"></span></div>
+          <input type="range" min="100" max="300" step="5" value="180" /></div>
+        <div class="slider" data-k="thickness"><div class="lbl"><b>rim thickness (lens band)</b><span class="val"></span></div>
+          <input type="range" min="4" max="40" step="1" value="16" /></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>References</legend>
+        <div class="field">背景画像を差し替え<input type="file" id="bgFile" accept="image/*" /></div>
+        <div class="field">Apple 静止画を読み込み<input type="file" id="diffFile" accept="image/*" /></div>
+        <div class="note">画像はローカル読み込みのみ（アップロードしない）。</div>
+      </fieldset>
+
+      <button class="reset" id="reset">Reset sliders</button>
+      <div class="note" id="verdict"></div>
+    </div>
+
+    <script>
+    // =====================================================================
+    //  SHARED-WITH-PRODUCT block — geometry + path generation.
+    //  This is intended to be lifted verbatim into lib/magnet.ts (drawHighlight).
+    //  Everything below "PLAYGROUND HARNESS" is scaffolding, not product code.
+    // =====================================================================
+
+    /** Sample a rounded-rect outline into N points (by rough arc length) with outward unit normals. */
+    function roundRectPerimeter(x, y, w, h, r, N) {
+      r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+      const cx = x + w / 2, cy = y + h / 2;
+      // Straight run lengths + quarter-arc length; walk perimeter by arc position.
+      const straightH = w - 2 * r, straightV = h - 2 * r, arc = (Math.PI / 2) * r;
+      const total = 2 * straightH + 2 * straightV + 4 * arc;
+      const pts = [];
+      for (let i = 0; i < N; i++) {
+        let s = (i / N) * total;
+        let px, py;
+        // top edge (L->R), TR arc, right edge, BR arc, bottom edge, BL arc, left edge, TL arc
+        const corners = [
+          [x + r, y, x + w - r, y, 'top'],
+        ];
+        // Walk segments explicitly.
+        let seg = s;
+        if (seg < straightH) { px = x + r + seg; py = y; pts.push(mk(px, py, 0, -1)); continue; }
+        seg -= straightH;
+        if (seg < arc) { const a = -Math.PI / 2 + (seg / arc) * (Math.PI / 2); const nx = Math.cos(a), ny = Math.sin(a); pts.push(mk(x + w - r + nx * r, y + r + ny * r, nx, ny)); continue; }
+        seg -= arc;
+        if (seg < straightV) { px = x + w; py = y + r + seg; pts.push(mk(px, py, 1, 0)); continue; }
+        seg -= straightV;
+        if (seg < arc) { const a = 0 + (seg / arc) * (Math.PI / 2); const nx = Math.cos(a), ny = Math.sin(a); pts.push(mk(x + w - r + nx * r, y + h - r + ny * r, nx, ny)); continue; }
+        seg -= arc;
+        if (seg < straightH) { px = x + w - r - seg; py = y + h; pts.push(mk(px, py, 0, 1)); continue; }
+        seg -= straightH;
+        if (seg < arc) { const a = Math.PI / 2 + (seg / arc) * (Math.PI / 2); const nx = Math.cos(a), ny = Math.sin(a); pts.push(mk(x + r + nx * r, y + h - r + ny * r, nx, ny)); continue; }
+        seg -= arc;
+        if (seg < straightV) { px = x; py = y + h - r - seg; pts.push(mk(px, py, -1, 0)); continue; }
+        seg -= straightV;
+        { const a = Math.PI + (seg / arc) * (Math.PI / 2); const nx = Math.cos(a), ny = Math.sin(a); pts.push(mk(x + r + nx * r, y + r + ny * r, nx, ny)); }
+      }
+      return { pts, total, cx, cy };
+      function mk(px, py, nx, ny) { return { x: px, y: py, nx, ny, s: 0 }; }
+    }
+
+    /**
+     * Displace perimeter points outward with a Gaussian bulge toward the cursor.
+     * Falloff uses each point's Euclidean-distance excess over the closest point
+     * (same shape along a straight edge as the old arc version, but continuous
+     * everywhere — no snap when the nearest point jumps across a corner/medial axis).
+     */
+    function deform(perimeter, cursor, p) {
+      const { pts } = perimeter;
+      const d2s = new Array(pts.length);
+      let bestD2 = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const dx = pts[i].x - cursor[0], dy = pts[i].y - cursor[1];
+        d2s[i] = dx * dx + dy * dy;
+        if (d2s[i] < bestD2) bestD2 = d2s[i];
+      }
+      const proximity = clamp(1 - Math.sqrt(bestD2) / p.R, 0, 1);
+      const twoSigma2 = 2 * p.sigma * p.sigma;
+      return pts.map((pt, i) => {
+        const bulge = p.A * Math.exp(-(d2s[i] - bestD2) / twoSigma2) * proximity;
+        return { x: pt.x + pt.nx * bulge, y: pt.y + pt.ny * bulge };
+      });
+    }
+
+    /** One closed path through points via centripetal Catmull-Rom, emitted as cubic Béziers. */
+    function catmullRomClosed(pts) {
+      const n = pts.length;
+      let d = `M ${f(pts[0].x)} ${f(pts[0].y)} `;
+      for (let i = 0; i < n; i++) {
+        const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+        const b1x = p1.x + (p2.x - p0.x) / 6, b1y = p1.y + (p2.y - p0.y) / 6;
+        const b2x = p2.x - (p3.x - p1.x) / 6, b2y = p2.y - (p3.y - p1.y) / 6;
+        d += `C ${f(b1x)} ${f(b1y)}, ${f(b2x)} ${f(b2y)}, ${f(p2.x)} ${f(p2.y)} `;
+      }
+      return d + 'Z';
+      function f(v) { return Math.round(v * 100) / 100; }
+    }
+
+    /** Rounded-rect refraction map (data-URL PNG): rim-concentrated displacement, flat center. */
+    function makeDisplacementMap(w, h, radius, thickness) {
+      const c = document.createElement('canvas');
+      c.width = Math.max(2, Math.round(w)); c.height = Math.max(2, Math.round(h));
+      const g = c.getContext('2d');
+      const img = g.createImageData(c.width, c.height);
+      const hw = c.width / 2, hh = c.height / 2, rr = Math.min(radius, Math.min(hw, hh));
+      for (let py = 0; py < c.height; py++) {
+        for (let px = 0; px < c.width; px++) {
+          // signed distance to rounded-rect edge (neg inside)
+          const sd = sdRoundRect(px - hw + 0.5, py - hh + 0.5, hw, hh, rr);
+          const depth = -sd; // px inside from the edge
+          let dx = 0, dy = 0;
+          if (depth > 0) {
+            const t = clamp(depth / thickness, 0, 1);      // 0 at rim → 1 inside (flat)
+            // convex squircle height; refraction bends most where slope is steep (near rim)
+            const slope = squircleSlope(t);
+            const nrm = sdNormal(px - hw + 0.5, py - hh + 0.5, hw, hh, rr); // outward
+            dx = nrm[0] * slope;
+            dy = nrm[1] * slope;
+          }
+          const idx = (py * c.width + px) * 4;
+          img.data[idx] = clamp(128 + dx * 127, 0, 255);
+          img.data[idx + 1] = clamp(128 + dy * 127, 0, 255);
+          img.data[idx + 2] = 128;
+          img.data[idx + 3] = 255;
+        }
+      }
+      g.putImageData(img, 0, 0);
+      return c.toDataURL();
+    }
+
+    function squircleSlope(t) {
+      // height y = (1 - (1-t)^4)^(1/4); slope dy/dt, normalized so rim (t~0) ≈ 1, center (t=1) = 0
+      const u = 1 - t;
+      const y = Math.pow(1 - Math.pow(u, 4), 0.25);
+      const dy = y > 1e-4 ? (Math.pow(u, 3)) / Math.pow(y, 3) : 1;
+      return clamp(dy, 0, 1) * (1 - t); // taper to 0 at center to avoid a hard inner ring
+    }
+
+    function sdRoundRect(x, y, hw, hh, r) {
+      const qx = Math.abs(x) - (hw - r), qy = Math.abs(y) - (hh - r);
+      const ax = Math.max(qx, 0), ay = Math.max(qy, 0);
+      return Math.hypot(ax, ay) + Math.min(Math.max(qx, qy), 0) - r;
+    }
+    function sdNormal(x, y, hw, hh, r) {
+      const e = 1;
+      const gx = sdRoundRect(x + e, y, hw, hh, r) - sdRoundRect(x - e, y, hw, hh, r);
+      const gy = sdRoundRect(x, y + e, hw, hh, r) - sdRoundRect(x, y - e, hw, hh, r);
+      const l = Math.hypot(gx, gy) || 1;
+      return [gx / l, gy / l];
+    }
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    // =====================================================================
+    //  PLAYGROUND HARNESS (not product) — wiring, states, sliders, render.
+    // =====================================================================
+
+    const DEFAULTS = { A: 12, sigma: 45, R: 110, radius: 14, scale: 55, blur: 0.5, saturate: 180, thickness: 16 };
+    const params = { ...DEFAULTS };
+    let state = 'idle';
+
+    const stage = document.getElementById('stage');
+    const glass = document.getElementById('glass');
+    const rimPath = document.getElementById('rimPath');
+    const rimSvg = document.getElementById('rimSvg');
+    const cursorEl = document.getElementById('cursor');
+    const lensMap = document.getElementById('lensMap');
+    const lensDisp = document.getElementById('lensDisp');
+
+    // The captured target: the hero button's rect (relative to the stage).
+    function heroRect() {
+      const hr = document.getElementById('hero').getBoundingClientRect();
+      const sr = stage.getBoundingClientRect();
+      const pad = 6; // framePad — frame sits a little outside the element
+      return { x: hr.left - sr.left - pad, y: hr.top - sr.top - pad, w: hr.width + pad * 2, h: hr.height + pad * 2 };
+    }
+
+    // Hardcoded cursor per frozen state, derived from the captured rect.
+    function cursorFor(st, rect) {
+      const midR = [rect.x + rect.w + 26, rect.y + rect.h / 2];       // just outside right edge
+      const corner = [rect.x + rect.w + 22, rect.y - 22];             // beyond top-right corner
+      const far = [rect.x + rect.w + Math.min(params.R - 12, 150), rect.y + rect.h / 2]; // within R, but far
+      const center = [rect.x + rect.w / 2, rect.y + rect.h / 2];      // resting on the element
+      return { idle: center, edge: midR, corner, far }[st];
+    }
+
+    function render() {
+      const rect = heroRect();
+      const cursor = cursorFor(state, rect);
+
+      // 1) geometry: deform the single outline toward the cursor
+      const perim = roundRectPerimeter(rect.x, rect.y, rect.w, rect.h, params.radius, 160);
+      const deformed = deform(perim, cursor, params);
+      const d = catmullRomClosed(deformed);
+
+      // bbox of the deformed path (for sizing the glass box + lens map)
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of deformed) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+      const bx = minX, by = minY, bw = maxX - minX, bh = maxY - minY;
+
+      // 2) frost + lens: clip a backdrop-sampling box to the path
+      glass.style.left = '0px'; glass.style.top = '0px';
+      glass.style.width = stage.clientWidth + 'px';
+      glass.style.height = stage.clientHeight + 'px';
+      glass.style.clipPath = `path('${d}')`;
+      glass.style.backdropFilter = `blur(${params.blur}px) saturate(${params.saturate}%) brightness(1.06) url(#lens)`;
+      glass.style.webkitBackdropFilter = glass.style.backdropFilter;
+
+      // lens map sized/positioned to the deformed bbox
+      const map = makeDisplacementMap(bw, bh, params.radius, params.thickness);
+      lensMap.setAttribute('href', map);
+      lensMap.setAttribute('x', bx); lensMap.setAttribute('y', by);
+      lensMap.setAttribute('width', bw); lensMap.setAttribute('height', bh);
+      lensDisp.setAttribute('scale', params.scale);
+
+      // 3) specular rim + depth, crisp, on the exact path
+      rimSvg.setAttribute('width', stage.clientWidth);
+      rimSvg.setAttribute('height', stage.clientHeight);
+      rimPath.setAttribute('d', d);
+      rimPath.setAttribute('stroke', 'rgba(255,255,255,0.55)');
+      rimPath.setAttribute('stroke-width', '1.2');
+      rimPath.style.filter = 'drop-shadow(0 1px 0 rgba(255,255,255,.35)) drop-shadow(0 8px 18px rgba(0,0,0,.45))';
+
+      // 4) cursor marker
+      cursorEl.style.left = cursor[0] + 'px';
+      cursorEl.style.top = cursor[1] + 'px';
+    }
+
+    // ---- sliders ----
+    document.querySelectorAll('.slider').forEach((s) => {
+      const key = s.dataset.k, input = s.querySelector('input'), val = s.querySelector('.val');
+      const sync = () => { params[key] = parseFloat(input.value); val.textContent = input.value; render(); };
+      input.addEventListener('input', sync);
+      params[key] = parseFloat(input.value); val.textContent = input.value;
+    });
+    document.getElementById('states').addEventListener('change', (e) => {
+      if (e.target.name === 'state') { state = e.target.value; render(); }
+    });
+    document.getElementById('reset').addEventListener('click', () => {
+      document.querySelectorAll('.slider').forEach((s) => {
+        const input = s.querySelector('input');
+        input.value = DEFAULTS[s.dataset.k];
+        input.dispatchEvent(new Event('input'));
+      });
+    });
+
+    // ---- reference images (local only) ----
+    document.getElementById('bgFile').addEventListener('change', (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      stage.style.backgroundImage = `url("${URL.createObjectURL(file)}")`;
+      requestAnimationFrame(render);
+    });
+    document.getElementById('diffFile').addEventListener('change', (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const diff = document.getElementById('diff');
+      document.getElementById('diffImg').src = URL.createObjectURL(file);
+      diff.classList.remove('empty');
+    });
+
+    document.getElementById('verdict').textContent =
+      'Judge: does the rim refraction + frost read as a material (not a flat blob)? Go → Phase 2. 微妙 → Canvas 継続.';
+
+    // Initial paint (after layout + the bg image lays targets out).
+    window.addEventListener('load', () => requestAnimationFrame(render));
+    window.addEventListener('resize', () => requestAnimationFrame(render));
+    requestAnimationFrame(render);
+    </script>
+  </body>
+</html>

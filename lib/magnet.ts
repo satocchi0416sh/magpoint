@@ -49,7 +49,8 @@ const opts = {
   framePad: 6, // gap between element and the glass frame
   frameRadius: 14, // frame corner radius
   samples: 160, // perimeter sample count for the deformable outline
-  bulgeA: 12, // max outward bulge toward the pointer (px)
+  baseBulge: 6, // resting bulge while hovering the element (breathing)
+  pullMax: 26, // extra magnetic stretch toward the pointer, peaking mid-range (px)
   bulgeSigma: 45, // Gaussian spread of the bulge along the arc (px)
   bulgeR: 110, // pointer distance at which the bulge fully decays
   lensScale: 55, // feDisplacementMap scale
@@ -70,7 +71,10 @@ let dirty = true;
 
 let glass: HTMLDivElement;
 let rimSvg: SVGSVGElement;
-let rimPath: SVGPathElement;
+let rimPath: SVGPathElement; // core gradient stroke
+let glowPath: SVGPathElement; // soft brand-blue halo under the core
+let hotPath: SVGPathElement; // white hotspot on the pointer-facing side of the rim
+let hotGrad: SVGRadialGradientElement;
 let lensMap: SVGFEImageElement;
 let shown = false;
 let mapKey = ''; // frame size the current displacement map was built for
@@ -225,7 +229,7 @@ function roundRectPerimeter(x: number, y: number, w: number, h: number, r: numbe
  * the field is continuous everywhere — centering on the nearest point made the
  * bulge snap when that point jumped across a corner or the rect's medial axis.
  */
-function deform(pts: PerimPt[], cursor: Pt): Pt[] {
+function deform(pts: PerimPt[], cursor: Pt, insideFrame: boolean): Pt[] {
   const d2s = new Array<number>(pts.length);
   let bestD2 = Infinity;
   for (let i = 0; i < pts.length; i++) {
@@ -234,10 +238,18 @@ function deform(pts: PerimPt[], cursor: Pt): Pt[] {
     d2s[i] = dx * dx + dy * dy;
     if (d2s[i] < bestD2) bestD2 = d2s[i];
   }
-  const proximity = clamp(1 - Math.sqrt(bestD2) / opts.bulgeR, 0, 1);
+  const bestD = Math.sqrt(bestD2);
+  const proximity = clamp(1 - bestD / opts.bulgeR, 0, 1);
+  // magnetic stretch: 0 when resting on the element, peaks mid-range, 0 at R —
+  // the frame visibly reaches for the pointer instead of barely rippling.
+  // Outside-only: inside a large element the nearest-edge distance grows too,
+  // which would bloom the frame away from a merely-hovering cursor. Both sides
+  // of the boundary tend to 0, so the gate stays continuous.
+  const x = clamp(bestD / opts.bulgeR, 0, 1);
+  const amp = opts.baseBulge * proximity + (insideFrame ? 0 : opts.pullMax * 4 * x * (1 - x));
   const twoSigma2 = 2 * opts.bulgeSigma * opts.bulgeSigma;
   return pts.map((pt, i) => {
-    const bulge = opts.bulgeA * Math.exp(-(d2s[i] - bestD2) / twoSigma2) * proximity;
+    const bulge = amp * Math.exp(-(d2s[i] - bestD2) / twoSigma2);
     return [pt.x + pt.nx * bulge, pt.y + pt.ny * bulge];
   });
 }
@@ -342,7 +354,8 @@ function render(): void {
 
   // single deformable outline, bulging toward the (spring-smoothed) pointer
   const perim = roundRectPerimeter(fx, fy, fw, fh, opts.frameRadius, opts.samples);
-  const target = deform(perim, [tip.x, tip.y]);
+  const inside = tip.x > fx && tip.x < fx + fw && tip.y > fy && tip.y < fy + fh;
+  const target = deform(perim, [tip.x, tip.y], inside);
 
   // lerp the drawn outline toward its target — sample order is stable (top-left,
   // clockwise, N fixed), so a capture switch morphs liquidly instead of teleporting
@@ -387,12 +400,16 @@ function render(): void {
   lensMap.setAttribute('width', String(bw));
   lensMap.setAttribute('height', String(bh));
 
-  // specular rim on the exact same path
+  // luminous rim on the exact same path, hotspot centered on the pointer side
   rimSvg.style.display = 'block';
   rimSvg.style.transform = `translate(${minX}px, ${minY}px)`;
   rimSvg.setAttribute('width', String(Math.ceil(bw)));
   rimSvg.setAttribute('height', String(Math.ceil(bh)));
+  glowPath.setAttribute('d', d);
   rimPath.setAttribute('d', d);
+  hotPath.setAttribute('d', d);
+  hotGrad.setAttribute('cx', String(tip.x - minX));
+  hotGrad.setAttribute('cy', String(tip.y - minY));
   shown = true;
 }
 
@@ -464,6 +481,7 @@ function buildOverlay(): void {
   glass.id = 'magpoint-glass';
   glass.style.cssText =
     'position:fixed;left:0;top:0;z-index:2147483646;pointer-events:none;display:none;' +
+    'background:rgba(93,140,255,0.055);' + // faint tint so the slab reads on flat white pages
     `backdrop-filter:blur(${opts.blur}px) saturate(${opts.saturate}%) brightness(1.06) url(#magpoint-lens)`;
   document.documentElement.appendChild(glass);
 
@@ -471,12 +489,39 @@ function buildOverlay(): void {
   rimSvg.id = 'magpoint-rim';
   rimSvg.style.cssText =
     'position:fixed;left:0;top:0;z-index:2147483646;pointer-events:none;display:none;overflow:visible';
-  rimPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  const NS = 'http://www.w3.org/2000/svg';
+  rimSvg.innerHTML =
+    '<defs>' +
+    '<linearGradient id="magpoint-rim-grad" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#cfe0ff"/><stop offset="0.5" stop-color="#5b8cff"/><stop offset="1" stop-color="#2f6bff"/>' +
+    '</linearGradient>' +
+    '<radialGradient id="magpoint-rim-hot" gradientUnits="userSpaceOnUse" r="90">' +
+    '<stop offset="0" stop-color="rgba(255,255,255,0.95)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/>' +
+    '</radialGradient>' +
+    '</defs>';
+  hotGrad = rimSvg.querySelector('radialGradient') as SVGRadialGradientElement;
+
+  glowPath = document.createElementNS(NS, 'path');
+  glowPath.setAttribute('fill', 'none');
+  glowPath.setAttribute('stroke', '#3f7bff');
+  glowPath.setAttribute('stroke-width', '7');
+  glowPath.setAttribute('opacity', '0.45');
+  glowPath.style.filter = 'blur(3px)';
+  rimSvg.appendChild(glowPath);
+
+  rimPath = document.createElementNS(NS, 'path');
   rimPath.setAttribute('fill', 'none');
-  rimPath.setAttribute('stroke', 'rgba(255,255,255,0.55)');
-  rimPath.setAttribute('stroke-width', '1.2');
-  rimPath.style.filter = 'drop-shadow(0 1px 0 rgba(255,255,255,.35)) drop-shadow(0 8px 18px rgba(0,0,0,.45))';
+  rimPath.setAttribute('stroke', 'url(#magpoint-rim-grad)');
+  rimPath.setAttribute('stroke-width', '2');
+  rimPath.style.filter = 'drop-shadow(0 6px 14px rgba(31,64,175,.35))';
   rimSvg.appendChild(rimPath);
+
+  hotPath = document.createElementNS(NS, 'path');
+  hotPath.setAttribute('fill', 'none');
+  hotPath.setAttribute('stroke', 'url(#magpoint-rim-hot)');
+  hotPath.setAttribute('stroke-width', '2.4');
+  rimSvg.appendChild(hotPath);
+
   document.documentElement.appendChild(rimSvg);
 }
 

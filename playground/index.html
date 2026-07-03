@@ -69,6 +69,7 @@
       /* Refraction/frost layer: an element clipped to the deformable path, sampling the backdrop. */
       #glass {
         position: absolute; z-index: 10; pointer-events: none; left: 0; top: 0;
+        background: rgba(93, 140, 255, 0.055); /* faint tint so the slab reads on flat pages */
         /* backdrop-filter set live from JS: blur() saturate() url(#lens) */
       }
       /* Crisp specular rim + depth: SVG path drawn on top, always follows the exact deformed outline. */
@@ -128,7 +129,19 @@
       </svg>
 
       <div id="glass"></div>
-      <svg id="rimSvg"><path id="rimPath" fill="none" /></svg>
+      <svg id="rimSvg">
+        <defs>
+          <linearGradient id="rimGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#cfe0ff"/><stop offset="0.5" stop-color="#5b8cff"/><stop offset="1" stop-color="#2f6bff"/>
+          </linearGradient>
+          <radialGradient id="rimHot" gradientUnits="userSpaceOnUse" r="90">
+            <stop offset="0" stop-color="rgba(255,255,255,0.95)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/>
+          </radialGradient>
+        </defs>
+        <path id="glowPath" fill="none" />
+        <path id="rimPath" fill="none" />
+        <path id="hotPath" fill="none" />
+      </svg>
       <div id="cursor"></div>
 
       <div id="targets">
@@ -165,8 +178,10 @@
 
       <fieldset>
         <legend>Deformable frame (B1)</legend>
-        <div class="slider" data-k="A"><div class="lbl"><b>A · max bulge</b><span class="val"></span></div>
-          <input type="range" min="0" max="28" step="1" value="12" /></div>
+        <div class="slider" data-k="pull"><div class="lbl"><b>pull · magnetic stretch</b><span class="val"></span></div>
+          <input type="range" min="0" max="48" step="1" value="26" /></div>
+        <div class="slider" data-k="base"><div class="lbl"><b>base · resting bulge</b><span class="val"></span></div>
+          <input type="range" min="0" max="16" step="1" value="6" /></div>
         <div class="slider" data-k="sigma"><div class="lbl"><b>σ · bulge spread (arc px)</b><span class="val"></span></div>
           <input type="range" min="10" max="120" step="1" value="45" /></div>
         <div class="slider" data-k="R"><div class="lbl"><b>R · reaction radius</b><span class="val"></span></div>
@@ -245,10 +260,11 @@
     /**
      * Displace perimeter points outward with a Gaussian bulge toward the cursor.
      * Falloff uses each point's Euclidean-distance excess over the closest point
-     * (same shape along a straight edge as the old arc version, but continuous
-     * everywhere — no snap when the nearest point jumps across a corner/medial axis).
+     * (continuous everywhere — no snap across corners / the medial axis).
+     * Amplitude = resting breath + magnetic stretch that peaks mid-range and is
+     * gated to cursor-outside (inside a large element it would bloom away).
      */
-    function deform(perimeter, cursor, p) {
+    function deform(perimeter, cursor, p, insideFrame) {
       const { pts } = perimeter;
       const d2s = new Array(pts.length);
       let bestD2 = Infinity;
@@ -257,10 +273,13 @@
         d2s[i] = dx * dx + dy * dy;
         if (d2s[i] < bestD2) bestD2 = d2s[i];
       }
-      const proximity = clamp(1 - Math.sqrt(bestD2) / p.R, 0, 1);
+      const bestD = Math.sqrt(bestD2);
+      const proximity = clamp(1 - bestD / p.R, 0, 1);
+      const x = clamp(bestD / p.R, 0, 1);
+      const amp = p.base * proximity + (insideFrame ? 0 : p.pull * 4 * x * (1 - x));
       const twoSigma2 = 2 * p.sigma * p.sigma;
       return pts.map((pt, i) => {
-        const bulge = p.A * Math.exp(-(d2s[i] - bestD2) / twoSigma2) * proximity;
+        const bulge = amp * Math.exp(-(d2s[i] - bestD2) / twoSigma2);
         return { x: pt.x + pt.nx * bulge, y: pt.y + pt.ny * bulge };
       });
     }
@@ -337,14 +356,28 @@
     //  PLAYGROUND HARNESS (not product) — wiring, states, sliders, render.
     // =====================================================================
 
-    const DEFAULTS = { A: 12, sigma: 45, R: 110, radius: 14, scale: 55, blur: 0.5, saturate: 180, thickness: 16 };
+    const DEFAULTS = { pull: 26, base: 6, sigma: 45, R: 110, radius: 14, scale: 55, blur: 0.5, saturate: 180, thickness: 16 };
     const params = { ...DEFAULTS };
     let state = 'idle';
 
     const stage = document.getElementById('stage');
     const glass = document.getElementById('glass');
     const rimPath = document.getElementById('rimPath');
+    const glowPath = document.getElementById('glowPath');
+    const hotPath = document.getElementById('hotPath');
+    const hotGrad = document.getElementById('rimHot');
     const rimSvg = document.getElementById('rimSvg');
+
+    // static rim styling (same 3-layer stack as lib/magnet.ts)
+    glowPath.setAttribute('stroke', '#3f7bff');
+    glowPath.setAttribute('stroke-width', '7');
+    glowPath.setAttribute('opacity', '0.45');
+    glowPath.style.filter = 'blur(3px)';
+    rimPath.setAttribute('stroke', 'url(#rimGrad)');
+    rimPath.setAttribute('stroke-width', '2');
+    rimPath.style.filter = 'drop-shadow(0 6px 14px rgba(31,64,175,.35))';
+    hotPath.setAttribute('stroke', 'url(#rimHot)');
+    hotPath.setAttribute('stroke-width', '2.4');
     const cursorEl = document.getElementById('cursor');
     const lensMap = document.getElementById('lensMap');
     const lensDisp = document.getElementById('lensDisp');
@@ -372,7 +405,8 @@
 
       // 1) geometry: deform the single outline toward the cursor
       const perim = roundRectPerimeter(rect.x, rect.y, rect.w, rect.h, params.radius, 160);
-      const deformed = deform(perim, cursor, params);
+      const inside = cursor[0] > rect.x && cursor[0] < rect.x + rect.w && cursor[1] > rect.y && cursor[1] < rect.y + rect.h;
+      const deformed = deform(perim, cursor, params, inside);
       const d = catmullRomClosed(deformed);
 
       // bbox of the deformed path (for sizing the glass box + lens map)
@@ -395,13 +429,14 @@
       lensMap.setAttribute('width', bw); lensMap.setAttribute('height', bh);
       lensDisp.setAttribute('scale', params.scale);
 
-      // 3) specular rim + depth, crisp, on the exact path
+      // 3) luminous rim (glow + gradient core + pointer hotspot) on the exact path
       rimSvg.setAttribute('width', stage.clientWidth);
       rimSvg.setAttribute('height', stage.clientHeight);
+      glowPath.setAttribute('d', d);
       rimPath.setAttribute('d', d);
-      rimPath.setAttribute('stroke', 'rgba(255,255,255,0.55)');
-      rimPath.setAttribute('stroke-width', '1.2');
-      rimPath.style.filter = 'drop-shadow(0 1px 0 rgba(255,255,255,.35)) drop-shadow(0 8px 18px rgba(0,0,0,.45))';
+      hotPath.setAttribute('d', d);
+      hotGrad.setAttribute('cx', cursor[0]);
+      hotGrad.setAttribute('cy', cursor[1]);
 
       // 4) cursor marker
       cursorEl.style.left = cursor[0] + 'px';

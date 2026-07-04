@@ -4,7 +4,7 @@
 clickable element — links, buttons, inputs — on *any* page, so small targets become
 effortless to hit. A pointing-assist & accessibility tool, not a cosmetic cursor skin.
 
-<!-- hero demo video goes here (GitHub user-attachments mp4) -->
+https://github.com/user-attachments/assets/7b93d4d9-4d36-48e9-bb40-90440160775d
 
 The captured element wears a **liquid-glass highlight** — a single deformable outline
 that bulges toward your pointer, refracting the page behind it. Purely cosmetic:

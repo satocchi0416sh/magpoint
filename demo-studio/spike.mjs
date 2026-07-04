@@ -41,6 +41,7 @@ const context = await chromium.launchPersistentContext(join(OUT, 'profile'), {
   args: [
     `--load-extension=${EXT}`,
     `--disable-extensions-except=${EXT}`,
+    '--force-device-scale-factor=2', // retina capture: screencast frames come out at 2x
     '--hide-crash-restore-bubble',
     '--no-first-run',
     '--no-default-browser-check',

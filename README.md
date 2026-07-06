@@ -1,5 +1,7 @@
 # MagPoint
 
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/mcflgbjfkamejadmpepkjbndfaakbndl?label=Chrome%20Web%20Store&color=4285F4)](https://chromewebstore.google.com/detail/mcflgbjfkamejadmpepkjbndfaakbndl)
+
 **A magnetic cursor for the web.** MagPoint pulls your mouse pointer toward the nearest
 clickable element — links, buttons, inputs — on *any* page, so small targets become
 effortless to hit. A pointing-assist & accessibility tool, not a cosmetic cursor skin.
@@ -10,11 +12,9 @@ The captured element wears a **liquid-glass highlight** — a single deformable 
 that bulges toward your pointer, refracting the page behind it. Purely cosmetic:
 selection never depends on the animation, so it can't mis-click.
 
-> Status: working and fun. Chrome Web Store release in progress.
-
 ## Install
 
-- **Chrome Web Store**: coming soon.
+- **Chrome Web Store**: [install MagPoint](https://chromewebstore.google.com/detail/mcflgbjfkamejadmpepkjbndfaakbndl).
 - **From source** (Chrome / Chromium):
 
   ```sh

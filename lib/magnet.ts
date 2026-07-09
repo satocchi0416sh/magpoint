@@ -19,7 +19,7 @@
  * docs/liquid-glass-notes.md.
  */
 
-import { clamp, frameRadiusFor, pointToRects } from './geometry';
+import { clamp, frameRadiusFor, pointToRects, routeClick } from './geometry';
 
 const CLICKABLE = [
   'a[href]',
@@ -502,10 +502,26 @@ function frame(): void {
 
 // ---- click routing --------------------------------------------------------
 
+/**
+ * Did the pointer land on something interactive in its own right? `closest(CLICKABLE)`
+ * catches recognized controls (and their inner nodes); computed `cursor: pointer`
+ * (an inherited property, so it reads through to inner spans/svgs) catches the ones
+ * the selector can't name — a carousel arrow that's a plain `<div>` with a JS listener.
+ * Either way the magnet must not hijack the click.
+ */
+function hitInteractive(target: EventTarget | null): boolean {
+  const el = target as Element | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  if (el.closest(CLICKABLE)) return true;
+  return getComputedStyle(el).cursor === 'pointer';
+}
+
 function onClick(e: MouseEvent): void {
   if (!enabled || !captured || !e.isTrusted || suppressed()) return;
   const el = captured.el;
-  if (el.contains(e.target as Node)) return;
+  // Redirect only when the click landed in dead space — a direct hit on the captured
+  // target or on any other interactive element is the browser's to handle.
+  if (routeClick(el.contains(e.target as Node), hitInteractive(e.target)) !== 'redirect') return;
   e.preventDefault();
   e.stopImmediatePropagation();
   el.focus?.();

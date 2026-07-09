@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { frameRadiusFor, pointToRect, pointToRects, type RectLike } from './geometry';
+import {
+  clusterStackedFragments,
+  frameRadiusFor,
+  horizontalOverlapFraction,
+  pointToRect,
+  pointToRects,
+  type RectLike,
+  unionRect,
+  verticalGap,
+} from './geometry';
 
 const rect = (left: number, top: number, right: number, bottom: number): RectLike => ({ left, top, right, bottom });
 
@@ -62,5 +71,69 @@ describe('frameRadiusFor', () => {
 
   it('never drops below the 4px floor', () => {
     expect(frameRadiusFor(10, 10, true, R)).toBe(4);
+  });
+});
+
+describe('horizontalOverlapFraction', () => {
+  it('is 0 for x-disjoint rects (a wrapped link’s offset halves)', () => {
+    // measured: 410/410 wrapped links on ja.wikipedia 三島由紀夫 had hFrac 0
+    expect(horizontalOverlapFraction(rect(100, 0, 200, 14), rect(0, 17, 80, 31))).toBe(0);
+  });
+
+  it('is 1 when the narrower is within the wider’s x-span (stacked search-result lines)', () => {
+    // measured: title x[90,455], sitename x[90,336] → sitename fully inside title in x
+    expect(horizontalOverlapFraction(rect(90, 208, 455, 223), rect(90, 179, 336, 194))).toBe(1);
+  });
+});
+
+describe('verticalGap', () => {
+  it('is positive when rects are separated in y', () => {
+    expect(verticalGap(rect(0, 0, 10, 14), rect(0, 20, 10, 34))).toBe(6);
+  });
+
+  it('is negative when rects overlap in y', () => {
+    expect(verticalGap(rect(0, 0, 10, 20), rect(0, 15, 10, 35))).toBe(-5);
+  });
+});
+
+describe('unionRect', () => {
+  it('bounds all rects', () => {
+    expect(unionRect([rect(10, 20, 30, 40), rect(0, 25, 15, 60)])).toEqual(rect(0, 20, 30, 60));
+  });
+});
+
+describe('clusterStackedFragments — fuse clearly-overlapping frames', () => {
+  const HFRAC = 0.5;
+  const VGAP = 1.5;
+
+  it('keeps a wrapped link split: horizontally offset halves do not fuse', () => {
+    // frag1 = end of line 1 (right), frag2 = start of line 2 (left) — hFrac 0
+    const groups = clusterStackedFragments([rect(100, 0, 200, 14), rect(0, 17, 80, 31)], HFRAC, VGAP);
+    expect(groups).toEqual([[0], [1]]);
+  });
+
+  it('fuses stacked search-result lines (real geometry: title + sitename, 14px gap)', () => {
+    // title x[90,455] y[208,223], sitename x[90,336] y[179,194] → hFrac 1, gap 14 ≤ 1.5×15
+    const groups = clusterStackedFragments([rect(90, 208, 455, 223), rect(90, 179, 336, 194)], HFRAC, VGAP);
+    expect(groups).toEqual([[0, 1]]);
+  });
+
+  it('does not fuse horizontally-aligned lines that sit far apart vertically', () => {
+    // aligned (hFrac 1) but 40px gap ≫ 1.5×14 → stay separate
+    const groups = clusterStackedFragments([rect(0, 0, 300, 14), rect(0, 54, 300, 68)], HFRAC, VGAP);
+    expect(groups).toEqual([[0], [1]]);
+  });
+
+  it('fuses transitively-stacked aligned lines into one group', () => {
+    const groups = clusterStackedFragments(
+      [rect(0, 0, 300, 14), rect(0, 18, 300, 32), rect(0, 36, 300, 50)],
+      HFRAC,
+      VGAP,
+    );
+    expect(groups).toEqual([[0, 1, 2]]);
+  });
+
+  it('returns one group for a single fragment', () => {
+    expect(clusterStackedFragments([rect(0, 0, 100, 20)], HFRAC, VGAP)).toEqual([[0]]);
   });
 });

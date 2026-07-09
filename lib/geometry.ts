@@ -72,6 +72,16 @@ export function preferCandidate(d: number, area: number, bestD: number, bestArea
   return d < bestD || (d === bestD && area < bestArea);
 }
 
+/**
+ * Throttle candidate rebuilds. `collect()` walks the whole document, so on a
+ * mutation-heavy page (x.com fires attribute/child mutations every frame) rebuilding
+ * each frame janks. Rebuild only when something changed AND at least `interval` ms
+ * have passed — a burst of mutations coalesces into one rebuild per interval.
+ */
+export function shouldCollect(dirty: boolean, now: number, lastCollect: number, interval: number): boolean {
+  return dirty && now - lastCollect >= interval;
+}
+
 /** What a physical click should do when the magnet holds a captured target. */
 export type ClickRouting = 'captured-hit' | 'interactive-hit' | 'redirect';
 

@@ -19,6 +19,9 @@
  * docs/liquid-glass-notes.md.
  */
 
+import { browser } from 'wxt/browser';
+
+import { isToggleMessage } from './ipc';
 import {
   clamp,
   clusterStackedFragments,
@@ -660,6 +663,17 @@ function showBadge(text: string): void {
   }, 1200);
 }
 
+function setEnabled(on: boolean): void {
+  enabled = on;
+  if (!enabled) {
+    captured = null;
+    wasCaptured = false;
+    document.documentElement.classList.remove('magpoint-snapping');
+    hideFrames(0);
+  }
+  showBadge(enabled ? 'MagPoint ON' : 'MagPoint OFF');
+}
+
 export function startMagnet(): void {
   buildOverlay();
 
@@ -682,17 +696,13 @@ export function startMagnet(): void {
 
   document.addEventListener('click', onClick, true);
 
-  addEventListener('keydown', (e) => {
-    if (e.altKey && (e.key === 'm' || e.key === 'M')) {
-      enabled = !enabled;
-      if (!enabled) {
-        captured = null;
-        wasCaptured = false;
-        document.documentElement.classList.remove('magpoint-snapping');
-        hideFrames(0);
-      }
-      showBadge(enabled ? 'MagPoint ON' : 'MagPoint OFF');
-    }
+  // The toggle shortcut arrives as a chrome.commands event relayed by the
+  // background script — not an in-page keydown. Browser-level handling sidesteps
+  // macOS Option-key composition (⌥M reaches the page as 'µ', which is why the
+  // old `e.key === 'm'` check never fired on a Mac) and pages that swallow
+  // keydown, and the key is rebindable at chrome://extensions/shortcuts.
+  browser.runtime.onMessage.addListener((msg) => {
+    if (isToggleMessage(msg)) setEnabled(!enabled);
   });
 
   requestAnimationFrame(frame);

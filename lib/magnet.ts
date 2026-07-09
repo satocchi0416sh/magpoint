@@ -28,6 +28,7 @@ import {
   preferCandidate,
   rectArea,
   routeClick,
+  shouldCollect,
   unionRect,
   type RectLike,
 } from './geometry';
@@ -62,6 +63,7 @@ type Pt = [number, number];
 const opts = {
   maxRadius: 120, // R_max: don't snap to far targets; preserves empty-space clicks
   maxTargetHFrac: 0.5, // taller than this × viewport height → a container, not a target (excluded from selection)
+  collectInterval: 150, // ms: min gap between full candidate rebuilds — coalesces mutation bursts (x.com fires them every frame)
   framePad: 6, // gap between element and the glass frame
   frameRadius: 14, // frame corner radius
   fuseHFrac: 0.5, // fuse stacked fragments sharing ≥ this fraction of the narrower's width (offset wrap halves ≈ 0)
@@ -86,6 +88,7 @@ let captured: Candidate | null = null;
 let wasCaptured = false;
 let enabled = true;
 let dirty = true;
+let lastCollect = -Infinity; // performance.now() of the last candidate rebuild (throttle gate)
 
 // One liquid-glass frame per line fragment of the captured element. The pool
 // grows on demand and hides unused slots, so single-line targets use exactly
@@ -506,9 +509,14 @@ function springTo(target: Pt): void {
 
 function frame(): void {
   if (enabled && raw[0] >= 0) {
-    if (dirty) {
+    // throttle: rebuild candidates at most once per collectInterval, even while a
+    // mutation-heavy page keeps flipping `dirty` — a full-document collect every
+    // frame is what makes x.com janky. Selection still uses the last set in between.
+    const now = performance.now();
+    if (shouldCollect(dirty, now, lastCollect, opts.collectInterval)) {
       collect();
       dirty = false;
+      lastCollect = now;
     }
     captured = suppressed() ? null : nearest(raw[0], raw[1]);
 
@@ -666,8 +674,11 @@ export function startMagnet(): void {
   addEventListener('scroll', () => (dirty = true), true);
   addEventListener('resize', () => (dirty = true));
 
+  // childList/subtree only — attribute churn on the whole subtree (x.com re-flips
+  // classes/aria constantly) drove `dirty` true every frame. Scroll/resize/DOM
+  // insertion still refresh; the throttle bounds staleness to collectInterval.
   const mo = new MutationObserver(() => (dirty = true));
-  mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+  mo.observe(document.documentElement, { childList: true, subtree: true });
 
   document.addEventListener('click', onClick, true);
 

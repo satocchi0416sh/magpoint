@@ -9,6 +9,7 @@ import {
   preferCandidate,
   rectArea,
   routeClick,
+  shouldCollect,
   type RectLike,
   unionRect,
   verticalGap,
@@ -109,6 +110,23 @@ describe('rectArea', () => {
   });
   it('is 0 for a degenerate rect', () => {
     expect(rectArea(rect(10, 10, 10, 40))).toBe(0);
+  });
+});
+
+describe('shouldCollect — throttle candidate rebuilds', () => {
+  const INTERVAL = 150;
+  it('never collects when nothing changed', () => {
+    expect(shouldCollect(false, 10_000, 0, INTERVAL)).toBe(false); // no rebuild without a dirty flag
+  });
+  it('collects a dirty page once the interval has elapsed', () => {
+    expect(shouldCollect(true, 1150, 1000, INTERVAL)).toBe(true); // AC1: exactly interval since last
+    expect(shouldCollect(true, 2000, 1000, INTERVAL)).toBe(true);
+  });
+  it('coalesces a burst: stays throttled within the interval', () => {
+    expect(shouldCollect(true, 1100, 1000, INTERVAL)).toBe(false); // AC2: mutation 100ms after last → wait
+  });
+  it('collects immediately on the first frame (no prior rebuild)', () => {
+    expect(shouldCollect(true, 0, -Infinity, INTERVAL)).toBe(true);
   });
 });
 

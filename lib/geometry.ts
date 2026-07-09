@@ -47,6 +47,23 @@ export function frameRadiusFor(fw: number, fh: number, multi: boolean, frameRadi
   return clamp(Math.min(frameRadius, lim), 4, frameRadius);
 }
 
+/** What a physical click should do when the magnet holds a captured target. */
+export type ClickRouting = 'captured-hit' | 'interactive-hit' | 'redirect';
+
+/**
+ * Route a trusted click. The bubble cursor only reaches across empty space, so it
+ * may synthesize a click on the captured target ('redirect') only when the pointer
+ * landed in dead space. A hit inside the captured target ('captured-hit') or on any
+ * other interactive element under the pointer ('interactive-hit') is left to the
+ * browser, so that element's own handler runs — otherwise the magnet steals clicks
+ * meant for controls it never captured (e.g. a carousel arrow with a JS listener).
+ */
+export function routeClick(insideCaptured: boolean, hitInteractive: boolean): ClickRouting {
+  if (insideCaptured) return 'captured-hit';
+  if (hitInteractive) return 'interactive-hit';
+  return 'redirect';
+}
+
 /** Bounding box of several rects. */
 export function unionRect(rects: RectLike[]): RectLike {
   let left = Infinity;

@@ -5,6 +5,7 @@ import {
   horizontalOverlapFraction,
   pointToRect,
   pointToRects,
+  routeClick,
   type RectLike,
   unionRect,
   verticalGap,
@@ -71,6 +72,25 @@ describe('frameRadiusFor', () => {
 
   it('never drops below the 4px floor', () => {
     expect(frameRadiusFor(10, 10, true, R)).toBe(4);
+  });
+});
+
+describe('routeClick — never steal a direct hit', () => {
+  it('passes through a hit inside the captured target', () => {
+    // clicked the captured element itself → browser handles it (unchanged behavior)
+    expect(routeClick(true, false)).toBe('captured-hit');
+    expect(routeClick(true, true)).toBe('captured-hit'); // captured hit wins over interactivity
+  });
+
+  it('yields to another interactive element under the pointer', () => {
+    // AC2/AC3: e.target is a real clickable / has cursor:pointer (e.g. a carousel arrow)
+    // → leave it to the browser instead of clicking the captured neighbour
+    expect(routeClick(false, true)).toBe('interactive-hit');
+  });
+
+  it('redirects a dead-space click to the captured target', () => {
+    // AC4: pointer in empty space near the captured target → synthesize its click
+    expect(routeClick(false, false)).toBe('redirect');
   });
 });
 

@@ -19,7 +19,7 @@
  * docs/liquid-glass-notes.md.
  */
 
-import { clamp, frameRadiusFor, pointToRects, routeClick } from './geometry';
+import { clamp, clusterStackedFragments, frameRadiusFor, pointToRects, routeClick, unionRect, type RectLike } from './geometry';
 
 const CLICKABLE = [
   'a[href]',
@@ -52,6 +52,8 @@ const opts = {
   maxRadius: 120, // R_max: don't snap to far targets; preserves empty-space clicks
   framePad: 6, // gap between element and the glass frame
   frameRadius: 14, // frame corner radius
+  fuseHFrac: 0.5, // fuse stacked fragments sharing ≥ this fraction of the narrower's width (offset wrap halves ≈ 0)
+  fuseVGap: 1.5, // ...and within this × avg fragment height vertically (folds in framePad + bulge reach)
   samples: 160, // perimeter sample count for the deformable outline
   baseBulge: 6, // resting bulge while hovering the element (breathing)
   pullMax: 26, // extra magnetic stretch toward the pointer, peaking mid-range (px)
@@ -386,17 +388,24 @@ function render(): void {
   }
   const rects = captured.rects;
   const multi = rects.length > 1;
-  ensureFrames(rects.length);
-  for (let i = 0; i < rects.length; i++) drawFrame(frames[i], rects[i], multi);
-  hideFrames(rects.length); // retire frames left over from a wider capture
+  // fuse fragments whose frames clearly overlap into one outline; separate lines
+  // (a wrapped link's offset halves) stay as their own single-fragment groups
+  const groups = multi ? clusterStackedFragments(rects, opts.fuseHFrac, opts.fuseVGap) : [[0]];
+  ensureFrames(groups.length);
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    const box: RectLike = g.length === 1 ? rects[g[0]] : unionRect(g.map((k) => rects[k]));
+    drawFrame(frames[i], box, multi);
+  }
+  hideFrames(groups.length); // retire frames left over from a wider capture
 }
 
-/** Draw one deformable glass frame around a single line box, bulging toward the pointer. */
-function drawFrame(frame: Frame, r: DOMRect, multi: boolean): void {
+/** Draw one deformable glass frame around a line box or fused group box, bulging toward the pointer. */
+function drawFrame(frame: Frame, r: RectLike, multi: boolean): void {
   const fx = r.left - opts.framePad;
   const fy = r.top - opts.framePad;
-  const fw = r.width + opts.framePad * 2;
-  const fh = r.height + opts.framePad * 2;
+  const fw = r.right - r.left + opts.framePad * 2;
+  const fh = r.bottom - r.top + opts.framePad * 2;
   const radius = frameRadiusFor(fw, fh, multi, opts.frameRadius);
 
   // deformable outline, bulging toward the (spring-smoothed) pointer. Every frame

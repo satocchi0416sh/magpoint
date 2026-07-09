@@ -7,7 +7,8 @@
  * distractor-robust — never grabs two targets at once.
  *
  * Presentation is decoupled and purely cosmetic: the captured element wears a
- * liquid-glass frame — a single deformable rounded-rect outline that bulges
+ * liquid-glass frame — one deformable rounded-rect outline per line box (so a
+ * wrapped inline link hugs each line instead of one boxy union) that bulges
  * toward the pointer (B1 Gaussian falloff), clipping a backdrop-refraction
  * layer (blur + saturate + SVG feDisplacementMap lens) with a specular rim on
  * top. Hit-test never depends on the animation, so the goo can't mis-click.
@@ -17,6 +18,8 @@
  * build should drop the url() term and keep blur/saturate. See
  * docs/liquid-glass-notes.md.
  */
+
+import { clamp, frameRadiusFor, pointToRects } from './geometry';
 
 const CLICKABLE = [
   'a[href]',
@@ -39,7 +42,8 @@ const CLICKABLE = [
 
 interface Candidate {
   el: HTMLElement;
-  rect: DOMRect;
+  rect: DOMRect; // union bounding box — culling, visibility, single-frame render
+  rects: DOMRect[]; // per-line fragment boxes (getClientRects); [rect] when on one line
 }
 
 type Pt = [number, number];
@@ -69,31 +73,35 @@ let wasCaptured = false;
 let enabled = true;
 let dirty = true;
 
-let glass: HTMLDivElement;
-let rimSvg: SVGSVGElement;
-let rimPath: SVGPathElement; // core gradient stroke
-let glowPath: SVGPathElement; // soft brand-blue halo under the core
-let hotPath: SVGPathElement; // white hotspot on the pointer-facing side of the rim
-let hotGrad: SVGRadialGradientElement;
-let lensMap: SVGFEImageElement;
-let shown = false;
-let mapKey = ''; // frame size the current displacement map was built for
-let framePts: Pt[] | null = null; // outline as currently drawn (lerps toward the target)
+// One liquid-glass frame per line fragment of the captured element. The pool
+// grows on demand and hides unused slots, so single-line targets use exactly
+// frames[0] (rendered identically to the old single-frame path).
+interface Frame {
+  glass: HTMLDivElement;
+  rimSvg: SVGSVGElement;
+  rimPath: SVGPathElement; // core gradient stroke
+  glowPath: SVGPathElement; // soft brand-blue halo under the core
+  hotPath: SVGPathElement; // white hotspot on the pointer-facing side of the rim
+  hotGrad: SVGRadialGradientElement;
+  lensMap: SVGFEImageElement;
+  framePts: Pt[] | null; // outline as currently drawn (lerps toward the target)
+  mapKey: string; // frame size+radius the current displacement map was built for
+  shown: boolean;
+}
+
+let defsRoot: HTMLDivElement; // container for every frame's feImage lens filter
+const frames: Frame[] = [];
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // ---- geometry -------------------------------------------------------------
-
-/** Shortest distance from a point to a rectangle (0 if inside) — nearest-edge metric. */
-function pointToRect(x: number, y: number, r: DOMRect): number {
-  const dx = Math.max(r.left - x, 0, x - r.right);
-  const dy = Math.max(r.top - y, 0, y - r.bottom);
-  return Math.hypot(dx, dy);
-}
 
 function nearest(x: number, y: number): Candidate | null {
   let best: Candidate | null = null;
   let bestD = Infinity;
   for (const c of candidates) {
-    const d = pointToRect(x, y, c.rect);
+    // measure against the nearest line fragment, not the union rect, so a wrapped
+    // link stops claiming the empty gap between its lines (and the small targets in it)
+    const d = pointToRects(x, y, c.rects);
     if (d < bestD) {
       bestD = d;
       best = c;
@@ -101,8 +109,6 @@ function nearest(x: number, y: number): Candidate | null {
   }
   return best && bestD <= opts.maxRadius ? best : null;
 }
-
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // ---- candidate collection -------------------------------------------------
 
@@ -124,9 +130,18 @@ function collect(): void {
   els.forEach((el) => {
     if (el.id.startsWith('magpoint-')) return;
     const rect = el.getBoundingClientRect();
-    if (isVisible(el, rect)) out.push({ el, rect });
+    if (isVisible(el, rect)) out.push({ el, rect, rects: lineFragments(el, rect) });
   });
   candidates = out;
+}
+
+/** Per-line border boxes for a wrapped inline element; [rect] for anything on one line. */
+function lineFragments(el: HTMLElement, rect: DOMRect): DOMRect[] {
+  const list = el.getClientRects();
+  if (list.length <= 1) return [rect];
+  const frags: DOMRect[] = [];
+  for (const r of list) if (r.width > 0 && r.height > 0) frags.push(r);
+  return frags.length > 1 ? frags : [rect];
 }
 
 // ---- suppression (don't break normal use) ---------------------------------
@@ -331,43 +346,79 @@ function makeDisplacementMap(w: number, h: number, radius: number, thickness: nu
   return c.toDataURL();
 }
 
+// Refraction maps depend only on frame size + radius, so cache the data-URLs and
+// share them across fragments and re-captures (per-fragment maps would otherwise
+// rebuild every same-sized line box on link-dense pages). Bounded FIFO so a page
+// with many distinct fragment sizes can't grow the cache without limit.
+const mapCache = new Map<string, string>(); // WxHxR → data-URL
+const MAP_CACHE_MAX = 64;
+function displacementMap(w: number, h: number, radius: number, thickness: number): string {
+  const key = `${Math.round(w)}x${Math.round(h)}x${Math.round(radius)}`;
+  const hit = mapCache.get(key);
+  if (hit !== undefined) return hit;
+  const url = makeDisplacementMap(w, h, radius, thickness);
+  if (mapCache.size >= MAP_CACHE_MAX) {
+    const oldest = mapCache.keys().next().value;
+    if (oldest !== undefined) mapCache.delete(oldest);
+  }
+  mapCache.set(key, url);
+  return url;
+}
+
 // ---- liquid-glass rendering -------------------------------------------------
 
-function hideGlass(): void {
-  framePts = null;
-  if (!shown) return;
-  glass.style.display = 'none';
-  rimSvg.style.display = 'none';
-  shown = false;
+function hideFrame(frame: Frame): void {
+  frame.framePts = null; // drop stale outline so a re-shown frame snaps, not slides
+  if (!frame.shown) return;
+  frame.glass.style.display = 'none';
+  frame.rimSvg.style.display = 'none';
+  frame.shown = false;
+}
+
+function hideFrames(from: number): void {
+  for (let i = from; i < frames.length; i++) hideFrame(frames[i]);
 }
 
 function render(): void {
   if (!captured) {
-    hideGlass();
+    hideFrames(0);
     return;
   }
-  const r = captured.rect;
+  const rects = captured.rects;
+  const multi = rects.length > 1;
+  ensureFrames(rects.length);
+  for (let i = 0; i < rects.length; i++) drawFrame(frames[i], rects[i], multi);
+  hideFrames(rects.length); // retire frames left over from a wider capture
+}
+
+/** Draw one deformable glass frame around a single line box, bulging toward the pointer. */
+function drawFrame(frame: Frame, r: DOMRect, multi: boolean): void {
   const fx = r.left - opts.framePad;
   const fy = r.top - opts.framePad;
   const fw = r.width + opts.framePad * 2;
   const fh = r.height + opts.framePad * 2;
+  const radius = frameRadiusFor(fw, fh, multi, opts.frameRadius);
 
-  // single deformable outline, bulging toward the (spring-smoothed) pointer
-  const perim = roundRectPerimeter(fx, fy, fw, fh, opts.frameRadius, opts.samples);
+  // deformable outline, bulging toward the (spring-smoothed) pointer. Every frame
+  // shares the one pointer, so the fragment nearest the cursor reaches most and the
+  // rest merely breathe — the set reads as one material. (Adjacent fragments' frames
+  // overlap by ~framePad, so the backdrop-filter double-refracts a faint inter-line
+  // seam — accepted; merging fragments into one continuous outline is out of scope.)
+  const perim = roundRectPerimeter(fx, fy, fw, fh, radius, opts.samples);
   const inside = tip.x > fx && tip.x < fx + fw && tip.y > fy && tip.y < fy + fh;
   const target = deform(perim, [tip.x, tip.y], inside);
 
   // lerp the drawn outline toward its target — sample order is stable (top-left,
   // clockwise, N fixed), so a capture switch morphs liquidly instead of teleporting
-  if (!framePts || framePts.length !== target.length) {
-    framePts = target;
+  if (!frame.framePts || frame.framePts.length !== target.length) {
+    frame.framePts = target;
   } else {
     for (let i = 0; i < target.length; i++) {
-      framePts[i][0] += (target[i][0] - framePts[i][0]) * opts.morph;
-      framePts[i][1] += (target[i][1] - framePts[i][1]) * opts.morph;
+      frame.framePts[i][0] += (target[i][0] - frame.framePts[i][0]) * opts.morph;
+      frame.framePts[i][1] += (target[i][1] - frame.framePts[i][1]) * opts.morph;
     }
   }
-  const pts = framePts;
+  const pts = frame.framePts;
 
   let minX = Infinity;
   let minY = Infinity;
@@ -384,33 +435,33 @@ function render(): void {
   const d = catmullRomClosed(pts, minX, minY);
 
   // frost + lens: a backdrop-sampling box sized to the deformed bbox, clipped to the path
-  glass.style.display = 'block';
-  glass.style.transform = `translate(${minX}px, ${minY}px)`;
-  glass.style.width = `${bw}px`;
-  glass.style.height = `${bh}px`;
-  glass.style.clipPath = `path('${d}')`;
+  frame.glass.style.display = 'block';
+  frame.glass.style.transform = `translate(${minX}px, ${minY}px)`;
+  frame.glass.style.width = `${bw}px`;
+  frame.glass.style.height = `${bh}px`;
+  frame.glass.style.clipPath = `path('${d}')`;
 
-  // refraction map: rebuilt only when the captured frame size changes, stretched
+  // refraction map: rebuilt only when this frame's size/radius changes, stretched
   // to the deformed bbox by feImage (preserveAspectRatio=none) — never per frame
-  const key = `${Math.round(fw)}x${Math.round(fh)}`;
-  if (key !== mapKey) {
-    lensMap.setAttribute('href', makeDisplacementMap(fw, fh, opts.frameRadius, opts.lensThickness));
-    mapKey = key;
+  const key = `${Math.round(fw)}x${Math.round(fh)}x${Math.round(radius)}`;
+  if (key !== frame.mapKey) {
+    frame.lensMap.setAttribute('href', displacementMap(fw, fh, radius, opts.lensThickness));
+    frame.mapKey = key;
   }
-  lensMap.setAttribute('width', String(bw));
-  lensMap.setAttribute('height', String(bh));
+  frame.lensMap.setAttribute('width', String(bw));
+  frame.lensMap.setAttribute('height', String(bh));
 
   // luminous rim on the exact same path, hotspot centered on the pointer side
-  rimSvg.style.display = 'block';
-  rimSvg.style.transform = `translate(${minX}px, ${minY}px)`;
-  rimSvg.setAttribute('width', String(Math.ceil(bw)));
-  rimSvg.setAttribute('height', String(Math.ceil(bh)));
-  glowPath.setAttribute('d', d);
-  rimPath.setAttribute('d', d);
-  hotPath.setAttribute('d', d);
-  hotGrad.setAttribute('cx', String(tip.x - minX));
-  hotGrad.setAttribute('cy', String(tip.y - minY));
-  shown = true;
+  frame.rimSvg.style.display = 'block';
+  frame.rimSvg.style.transform = `translate(${minX}px, ${minY}px)`;
+  frame.rimSvg.setAttribute('width', String(Math.ceil(bw)));
+  frame.rimSvg.setAttribute('height', String(Math.ceil(bh)));
+  frame.glowPath.setAttribute('d', d);
+  frame.rimPath.setAttribute('d', d);
+  frame.hotPath.setAttribute('d', d);
+  frame.hotGrad.setAttribute('cx', String(tip.x - minX));
+  frame.hotGrad.setAttribute('cy', String(tip.y - minY));
+  frame.shown = true;
 }
 
 // ---- main loop ------------------------------------------------------------
@@ -464,44 +515,55 @@ function onClick(e: MouseEvent): void {
 // ---- setup ----------------------------------------------------------------
 
 function buildOverlay(): void {
-  // SVG filter defs (lens) — feImage href is filled in lazily by render()
-  const defs = document.createElement('div');
-  defs.id = 'magpoint-filters';
-  defs.style.cssText = 'position:fixed;width:0;height:0;pointer-events:none';
-  defs.innerHTML =
-    '<svg aria-hidden="true" style="position:absolute;width:0;height:0"><defs>' +
-    '<filter id="magpoint-lens" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">' +
+  // shared, offscreen container holding each frame's feImage lens filter
+  defsRoot = document.createElement('div');
+  defsRoot.id = 'magpoint-filters';
+  defsRoot.style.cssText = 'position:fixed;width:0;height:0;pointer-events:none';
+  document.documentElement.appendChild(defsRoot);
+}
+
+function ensureFrames(n: number): void {
+  while (frames.length < n) frames.push(buildFrame(frames.length));
+}
+
+/** Build one frame's DOM: its own lens filter, backdrop-glass div, and rim SVG (ids suffixed by index so the per-frame url(#…) references never collide). */
+function buildFrame(i: number): Frame {
+  const filterId = `magpoint-lens-${i}`;
+  const fsvg = document.createElementNS(SVG_NS, 'svg');
+  fsvg.setAttribute('aria-hidden', 'true');
+  fsvg.style.cssText = 'position:absolute;width:0;height:0';
+  fsvg.innerHTML =
+    `<defs><filter id="${filterId}" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%">` +
     '<feImage result="map" preserveAspectRatio="none" x="0" y="0"/>' +
     `<feDisplacementMap in="SourceGraphic" in2="map" xChannelSelector="R" yChannelSelector="G" scale="${opts.lensScale}"/>` +
-    '</filter></defs></svg>';
-  document.documentElement.appendChild(defs);
-  lensMap = defs.querySelector('feImage') as SVGFEImageElement;
+    '</filter></defs>';
+  defsRoot.appendChild(fsvg);
+  const lensMap = fsvg.querySelector('feImage') as SVGFEImageElement;
 
-  glass = document.createElement('div');
-  glass.id = 'magpoint-glass';
+  const glass = document.createElement('div');
+  glass.id = `magpoint-glass-${i}`;
   glass.style.cssText =
     'position:fixed;left:0;top:0;z-index:2147483646;pointer-events:none;display:none;' +
     'background:rgba(93,140,255,0.055);' + // faint tint so the slab reads on flat white pages
-    `backdrop-filter:blur(${opts.blur}px) saturate(${opts.saturate}%) brightness(1.06) url(#magpoint-lens)`;
+    `backdrop-filter:blur(${opts.blur}px) saturate(${opts.saturate}%) brightness(1.06) url(#${filterId})`;
   document.documentElement.appendChild(glass);
 
-  rimSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  rimSvg.id = 'magpoint-rim';
+  const rimSvg = document.createElementNS(SVG_NS, 'svg');
+  rimSvg.id = `magpoint-rim-${i}`;
   rimSvg.style.cssText =
     'position:fixed;left:0;top:0;z-index:2147483646;pointer-events:none;display:none;overflow:visible';
-  const NS = 'http://www.w3.org/2000/svg';
   rimSvg.innerHTML =
     '<defs>' +
-    '<linearGradient id="magpoint-rim-grad" x1="0" y1="0" x2="0" y2="1">' +
+    `<linearGradient id="magpoint-rim-grad-${i}" x1="0" y1="0" x2="0" y2="1">` +
     '<stop offset="0" stop-color="#cfe0ff"/><stop offset="0.5" stop-color="#5b8cff"/><stop offset="1" stop-color="#2f6bff"/>' +
     '</linearGradient>' +
-    '<radialGradient id="magpoint-rim-hot" gradientUnits="userSpaceOnUse" r="90">' +
+    `<radialGradient id="magpoint-rim-hot-${i}" gradientUnits="userSpaceOnUse" r="90">` +
     '<stop offset="0" stop-color="rgba(255,255,255,0.95)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/>' +
     '</radialGradient>' +
     '</defs>';
-  hotGrad = rimSvg.querySelector('radialGradient') as SVGRadialGradientElement;
+  const hotGrad = rimSvg.querySelector('radialGradient') as SVGRadialGradientElement;
 
-  glowPath = document.createElementNS(NS, 'path');
+  const glowPath = document.createElementNS(SVG_NS, 'path');
   glowPath.setAttribute('fill', 'none');
   glowPath.setAttribute('stroke', '#3f7bff');
   glowPath.setAttribute('stroke-width', '7');
@@ -509,20 +571,22 @@ function buildOverlay(): void {
   glowPath.style.filter = 'blur(3px)';
   rimSvg.appendChild(glowPath);
 
-  rimPath = document.createElementNS(NS, 'path');
+  const rimPath = document.createElementNS(SVG_NS, 'path');
   rimPath.setAttribute('fill', 'none');
-  rimPath.setAttribute('stroke', 'url(#magpoint-rim-grad)');
+  rimPath.setAttribute('stroke', `url(#magpoint-rim-grad-${i})`);
   rimPath.setAttribute('stroke-width', '2');
   rimPath.style.filter = 'drop-shadow(0 6px 14px rgba(31,64,175,.35))';
   rimSvg.appendChild(rimPath);
 
-  hotPath = document.createElementNS(NS, 'path');
+  const hotPath = document.createElementNS(SVG_NS, 'path');
   hotPath.setAttribute('fill', 'none');
-  hotPath.setAttribute('stroke', 'url(#magpoint-rim-hot)');
+  hotPath.setAttribute('stroke', `url(#magpoint-rim-hot-${i})`);
   hotPath.setAttribute('stroke-width', '2.4');
   rimSvg.appendChild(hotPath);
 
   document.documentElement.appendChild(rimSvg);
+
+  return { glass, rimSvg, rimPath, glowPath, hotPath, hotGrad, lensMap, framePts: null, mapKey: '', shown: false };
 }
 
 function showBadge(text: string): void {
@@ -569,7 +633,7 @@ export function startMagnet(): void {
         captured = null;
         wasCaptured = false;
         document.documentElement.classList.remove('magpoint-snapping');
-        hideGlass();
+        hideFrames(0);
       }
       showBadge(enabled ? 'MagPoint ON' : 'MagPoint OFF');
     }

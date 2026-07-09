@@ -2,7 +2,7 @@
   "name": "magpoint",
   "description": "A magnetic cursor that snaps to the nearest clickable element on any page — pointing assist & accessibility, built on bubble-cursor HCI research.",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "author": "Satoyoshi Hirano",
   "license": "MIT",

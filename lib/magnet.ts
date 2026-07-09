@@ -19,7 +19,18 @@
  * docs/liquid-glass-notes.md.
  */
 
-import { clamp, clusterStackedFragments, frameRadiusFor, pointToRects, routeClick, unionRect, type RectLike } from './geometry';
+import {
+  clamp,
+  clusterStackedFragments,
+  frameRadiusFor,
+  isOversizedTarget,
+  pointToRects,
+  preferCandidate,
+  rectArea,
+  routeClick,
+  unionRect,
+  type RectLike,
+} from './geometry';
 
 const CLICKABLE = [
   'a[href]',
@@ -50,6 +61,7 @@ type Pt = [number, number];
 
 const opts = {
   maxRadius: 120, // R_max: don't snap to far targets; preserves empty-space clicks
+  maxTargetHFrac: 0.5, // taller than this × viewport height → a container, not a target (excluded from selection)
   framePad: 6, // gap between element and the glass frame
   frameRadius: 14, // frame corner radius
   fuseHFrac: 0.5, // fuse stacked fragments sharing ≥ this fraction of the narrower's width (offset wrap halves ≈ 0)
@@ -100,12 +112,16 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 function nearest(x: number, y: number): Candidate | null {
   let best: Candidate | null = null;
   let bestD = Infinity;
+  let bestArea = Infinity;
   for (const c of candidates) {
     // measure against the nearest line fragment, not the union rect, so a wrapped
     // link stops claiming the empty gap between its lines (and the small targets in it)
     const d = pointToRects(x, y, c.rects);
-    if (d < bestD) {
+    // break distance-0 ties (nested clickables under the pointer) by smaller area,
+    // so the innermost control wins instead of an enclosing container
+    if (preferCandidate(d, rectArea(c.rect), bestD, bestArea)) {
       bestD = d;
+      bestArea = rectArea(c.rect);
       best = c;
     }
   }
@@ -132,7 +148,11 @@ function collect(): void {
   els.forEach((el) => {
     if (el.id.startsWith('magpoint-')) return;
     const rect = el.getBoundingClientRect();
-    if (isVisible(el, rect)) out.push({ el, rect, rects: lineFragments(el, rect) });
+    // skip whole-column containers — a target taller than half the viewport is a
+    // wrapper (x.com tweet / sidebar), not something to snap to
+    if (isVisible(el, rect) && !isOversizedTarget(rect, innerHeight, opts.maxTargetHFrac)) {
+      out.push({ el, rect, rects: lineFragments(el, rect) });
+    }
   });
   candidates = out;
 }

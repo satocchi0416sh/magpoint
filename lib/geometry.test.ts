@@ -3,8 +3,11 @@ import {
   clusterStackedFragments,
   frameRadiusFor,
   horizontalOverlapFraction,
+  isOversizedTarget,
   pointToRect,
   pointToRects,
+  preferCandidate,
+  rectArea,
   routeClick,
   type RectLike,
   unionRect,
@@ -72,6 +75,40 @@ describe('frameRadiusFor', () => {
 
   it('never drops below the 4px floor', () => {
     expect(frameRadiusFor(10, 10, true, R)).toBe(4);
+  });
+});
+
+describe('isOversizedTarget — exclude whole-column containers', () => {
+  const VH = 800;
+  it('excludes a candidate taller than half the viewport (x.com column / sidebar)', () => {
+    // AC1/AC3: a full-height tweet column or sidebar is a wrapper, not a target
+    expect(isOversizedTarget(rect(0, 0, 600, 780), VH, 0.5)).toBe(true);
+    expect(isOversizedTarget(rect(1150, 0, 1500, 760), VH, 0.5)).toBe(true); // narrow but full-height sidebar
+  });
+  it('keeps normal controls, including a big hero CTA below the ceiling (AC5)', () => {
+    expect(isOversizedTarget(rect(0, 0, 120, 40), VH, 0.5)).toBe(false); // ordinary button
+    expect(isOversizedTarget(rect(0, 0, 1400, 120), VH, 0.5)).toBe(false); // full-width short CTA
+    expect(isOversizedTarget(rect(0, 0, 300, 400), VH, 0.5)).toBe(false); // 400 == 0.5×800, not strictly over
+  });
+});
+
+describe('preferCandidate — innermost wins a distance-0 tie', () => {
+  it('prefers the strictly nearer candidate regardless of area', () => {
+    expect(preferCandidate(5, 10, 8, 1)).toBe(true); // nearer even though bigger
+    expect(preferCandidate(8, 1, 5, 10)).toBe(false); // farther loses even though smaller
+  });
+  it('breaks an equal distance by smaller area (AC4: inner control over container)', () => {
+    expect(preferCandidate(0, 100, 0, 5000)).toBe(true); // smaller area wins the 0-distance tie
+    expect(preferCandidate(0, 5000, 0, 100)).toBe(false); // larger container loses the tie
+  });
+});
+
+describe('rectArea', () => {
+  it('multiplies width by height', () => {
+    expect(rectArea(rect(0, 0, 100, 20))).toBe(2000);
+  });
+  it('is 0 for a degenerate rect', () => {
+    expect(rectArea(rect(10, 10, 10, 40))).toBe(0);
   });
 });
 

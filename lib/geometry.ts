@@ -47,6 +47,31 @@ export function frameRadiusFor(fw: number, fh: number, multi: boolean, frameRadi
   return clamp(Math.min(frameRadius, lim), 4, frameRadius);
 }
 
+/** Area of a rect (0 for a degenerate rect). */
+export function rectArea(r: RectLike): number {
+  return Math.max(0, r.right - r.left) * Math.max(0, r.bottom - r.top);
+}
+
+/**
+ * A candidate taller than `hFrac` of the viewport is a container (a whole tweet or
+ * sidebar column), not a pointable target — the bubble cursor is for small controls.
+ * Height is the discriminating axis: real targets are a line or a few lines tall,
+ * while giant clickable wrappers span most of the viewport. Excluding them stops the
+ * glass frame from swallowing the whole column and lets the inner controls win.
+ */
+export function isOversizedTarget(r: RectLike, viewportH: number, hFrac: number): boolean {
+  return r.bottom - r.top > hFrac * viewportH;
+}
+
+/**
+ * Selection tie-break: prefer the nearer candidate, and on an equal distance (the
+ * pointer sits inside several nested clickables, so they all score 0) prefer the
+ * smaller one — the innermost control wins instead of its enclosing container.
+ */
+export function preferCandidate(d: number, area: number, bestD: number, bestArea: number): boolean {
+  return d < bestD || (d === bestD && area < bestArea);
+}
+
 /** What a physical click should do when the magnet holds a captured target. */
 export type ClickRouting = 'captured-hit' | 'interactive-hit' | 'redirect';
 

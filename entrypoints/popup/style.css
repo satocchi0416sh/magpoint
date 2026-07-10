@@ -1,0 +1,153 @@
+/* Dark tile + the product's luminous glass blue (from the rim gradient:
+   #cfe0ff / #5b8cff / #2f6bff). One glowing element (the master switch),
+   thin soft light only — no gloss bands, no bevels. */
+
+:root {
+  --bg: #0b0f1a;
+  --panel: #111827;
+  --line: rgba(207, 224, 255, 0.08);
+  --text: #e6ecff;
+  --muted: #8b96b3;
+  --blue: #5b8cff;
+  --blue-deep: #2f6bff;
+  --blue-ice: #cfe0ff;
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+body {
+  width: 300px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, var(--blue-ice), var(--blue));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+main { padding: 6px 16px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+main .row:last-child { border-bottom: none; }
+
+.row-label { display: flex; flex-direction: column; gap: 2px; }
+.host, .hint { font-size: 11px; color: var(--muted); }
+.host:empty { display: none; }
+
+#site-row.unavailable { opacity: 0.45; pointer-events: none; }
+
+/* ---- switches (custom track, no native checkbox visuals) ---- */
+
+.switch { position: relative; display: inline-block; flex: none; }
+.switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.track {
+  display: block;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: #1c2434;
+  border: 1px solid var(--line);
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  pointer-events: none;
+}
+.thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin: 2px;
+  transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + .track {
+  background: linear-gradient(180deg, var(--blue), var(--blue-deep));
+  border-color: transparent;
+}
+.switch input:checked + .track .thumb {
+  transform: translateX(16px);
+  background: #fff;
+}
+.switch input:focus-visible + .track { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* the hero: only the master switch glows when on */
+.switch.master .track { width: 44px; height: 24px; }
+.switch.master .thumb { width: 18px; height: 18px; }
+.switch.master input:checked + .track {
+  box-shadow: 0 0 10px rgba(91, 140, 255, 0.55), 0 0 26px rgba(47, 107, 255, 0.25);
+}
+.switch.master input:checked + .track .thumb { transform: translateX(20px); }
+
+/* ---- strength segmented control ---- */
+
+.seg {
+  display: flex;
+  background: #1c2434;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.seg button[aria-checked='true'] {
+  background: linear-gradient(180deg, var(--blue), var(--blue-deep));
+  color: #fff;
+}
+.seg button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+kbd {
+  font: 11px/1 ui-monospace, monospace;
+  color: var(--blue-ice);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 7px;
+}
+
+body.off main { opacity: 0.55; }

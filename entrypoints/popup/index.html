@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MagPoint</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <span class="wordmark">MagPoint</span>
+      <!-- hero master switch: the one glowing element -->
+      <label class="switch master">
+        <input id="master" type="checkbox" />
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+    </header>
+
+    <main>
+      <label class="row" id="site-row">
+        <span class="row-label">Disable on this site<span class="host" id="host"></span></span>
+        <span class="switch">
+          <input id="site" type="checkbox" />
+          <span class="track"><span class="thumb"></span></span>
+        </span>
+      </label>
+
+      <label class="row">
+        <span class="row-label">Lighter glass effect<span class="hint">rim only, no lens</span></span>
+        <span class="switch">
+          <input id="lite" type="checkbox" />
+          <span class="track"><span class="thumb"></span></span>
+        </span>
+      </label>
+
+      <div class="row">
+        <span class="row-label">Magnet strength</span>
+        <div class="seg" role="radiogroup" aria-label="Magnet strength" id="strength">
+          <button type="button" data-strength="weak">Weak</button>
+          <button type="button" data-strength="normal">Normal</button>
+          <button type="button" data-strength="strong">Strong</button>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <span>Toggle anywhere</span>
+      <kbd id="shortcut">…</kbd>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

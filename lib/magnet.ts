@@ -19,9 +19,8 @@
  * docs/liquid-glass-notes.md.
  */
 
-import { browser } from 'wxt/browser';
-
-import { isToggleMessage } from './ipc';
+import { effectiveEnabled, maxRadiusFor, normalizeSettings, type Settings } from './settings';
+import { settingsItem } from './settings-store';
 import {
   clamp,
   clusterStackedFragments,
@@ -89,7 +88,8 @@ let raw: Pt = [-1, -1]; // physical pointer (drives selection)
 const tip = { x: -1, y: -1, vx: 0, vy: 0 }; // bulge target, trails the pointer
 let captured: Candidate | null = null;
 let wasCaptured = false;
-let enabled = true;
+let enabled = false; // off until settings load — a blocked site must never flash on
+let effectsLite = false; // drop the refraction lens + backdrop-filter, keep the rim
 let dirty = true;
 let lastCollect = -Infinity; // performance.now() of the last candidate rebuild (throttle gate)
 
@@ -469,22 +469,27 @@ function drawFrame(frame: Frame, r: RectLike, multi: boolean): void {
   const bh = maxY - minY;
   const d = catmullRomClosed(pts, minX, minY);
 
-  // frost + lens: a backdrop-sampling box sized to the deformed bbox, clipped to the path
-  frame.glass.style.display = 'block';
-  frame.glass.style.transform = `translate(${minX}px, ${minY}px)`;
-  frame.glass.style.width = `${bw}px`;
-  frame.glass.style.height = `${bh}px`;
-  frame.glass.style.clipPath = `path('${d}')`;
+  if (!effectsLite) {
+    // frost + lens: a backdrop-sampling box sized to the deformed bbox, clipped to the path
+    frame.glass.style.display = 'block';
+    frame.glass.style.transform = `translate(${minX}px, ${minY}px)`;
+    frame.glass.style.width = `${bw}px`;
+    frame.glass.style.height = `${bh}px`;
+    frame.glass.style.clipPath = `path('${d}')`;
 
-  // refraction map: rebuilt only when this frame's size/radius changes, stretched
-  // to the deformed bbox by feImage (preserveAspectRatio=none) — never per frame
-  const key = `${Math.round(fw)}x${Math.round(fh)}x${Math.round(radius)}`;
-  if (key !== frame.mapKey) {
-    frame.lensMap.setAttribute('href', displacementMap(fw, fh, radius, opts.lensThickness));
-    frame.mapKey = key;
+    // refraction map: rebuilt only when this frame's size/radius changes, stretched
+    // to the deformed bbox by feImage (preserveAspectRatio=none) — never per frame
+    const key = `${Math.round(fw)}x${Math.round(fh)}x${Math.round(radius)}`;
+    if (key !== frame.mapKey) {
+      frame.lensMap.setAttribute('href', displacementMap(fw, fh, radius, opts.lensThickness));
+      frame.mapKey = key;
+    }
+    frame.lensMap.setAttribute('width', String(bw));
+    frame.lensMap.setAttribute('height', String(bh));
+  } else if (frame.glass.style.display !== 'none') {
+    // lighter glass: no backdrop sampling at all — the rim below carries the look
+    frame.glass.style.display = 'none';
   }
-  frame.lensMap.setAttribute('width', String(bw));
-  frame.lensMap.setAttribute('height', String(bh));
 
   // luminous rim on the exact same path, hotspot centered on the pointer side
   frame.rimSvg.style.display = 'block';
@@ -674,6 +679,14 @@ function setEnabled(on: boolean): void {
   showBadge(enabled ? 'MagPoint ON' : 'MagPoint OFF');
 }
 
+/** Fold the stored settings into the engine; badge only when this tab's effective state flips. */
+function applySettings(s: Settings): void {
+  opts.maxRadius = maxRadiusFor(s.strength);
+  effectsLite = s.liteGlass;
+  const on = effectiveEnabled(s, location.hostname);
+  if (on !== enabled) setEnabled(on);
+}
+
 export function startMagnet(): void {
   buildOverlay();
 
@@ -696,15 +709,12 @@ export function startMagnet(): void {
 
   document.addEventListener('click', onClick, true);
 
-  // The toggle shortcut arrives as a chrome.commands event relayed by the
-  // background script — not an in-page keydown. Browser-level handling sidesteps
-  // macOS Option-key composition (⌥M reaches the page as 'µ', which is why the
-  // old `e.key === 'm'` check never fired on a Mac) and pages that swallow
-  // keydown, and the key is rebindable at chrome://extensions/shortcuts.
-  browser.runtime.onMessage.addListener((msg) => {
-    if (isToggleMessage(msg)) setEnabled(!enabled);
-  });
+  // Settings storage is the single source of truth: the popup and the ⌥M
+  // command (background handler) both write it, and every tab converges here.
+  // The initial load flips `enabled` false→true (with the ON badge) unless
+  // this host is blocked or the master is off.
+  settingsItem.getValue().then((s) => applySettings(normalizeSettings(s)));
+  settingsItem.watch((s) => applySettings(normalizeSettings(s)));
 
   requestAnimationFrame(frame);
-  showBadge('MagPoint ON · Alt+M to toggle');
 }
